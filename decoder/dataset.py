@@ -67,7 +67,11 @@ class VocosDataset(Dataset):
             # print("有问题哈,数据处理部分")
             y = y.mean(dim=-1, keepdim=False)
         gain = np.random.uniform(-1, -6) if self.train else -3
-        y, _ = torchaudio.sox_effects.apply_effects_tensor(y, sr, [["norm", f"{gain:.2f}"]])
+        peak = y.abs().max()
+        if peak > 0:
+            y = y / peak
+        target_amp = 10 ** (gain / 20)
+        y = y * target_amp
         if sr != self.sampling_rate:
             y = torchaudio.functional.resample(y, orig_freq=sr, new_freq=self.sampling_rate)
         if y.size(-1) < self.num_samples:

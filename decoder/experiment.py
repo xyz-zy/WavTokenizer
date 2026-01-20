@@ -83,6 +83,13 @@ class VocosExp(pl.LightningModule):
         self.train_discriminator = False
         self.base_mel_coeff = self.mel_loss_coeff = mel_loss_coeff
 
+        # """
+        # RuntimeError: Training with multiple optimizers is only supported with manual optimization. 
+        # Set `self.automatic_optimization = False`, then access your optimizers in `training_step` 
+        # with `opt1, opt2, ... = self.optimizers()`.
+        # """
+        # self.automatic_optimization = False
+
     def configure_optimizers(self):
         disc_params = [
             {"params": self.multiperioddisc.parameters()},
@@ -123,6 +130,8 @@ class VocosExp(pl.LightningModule):
 
         # train discriminator
         if optimizer_idx == 0 and self.train_discriminator:
+            # opt, _ = self.optimizers()
+            # opt.zero_grad()
             with torch.no_grad():
                 audio_hat, _ = self(audio_input, **kwargs)
 
@@ -145,10 +154,14 @@ class VocosExp(pl.LightningModule):
             self.log("discriminator/multi_period_loss", loss_mp)
             self.log("discriminator/multi_res_loss", loss_mrd)
             self.log("discriminator/dac", loss_dac)
+            # self.manual_backward(loss)
+            # opt.step()
             return loss
 
         # train generator
         if optimizer_idx == 1:
+            # _, opt = self.optimizers()
+            # opt.zero_grad()
             audio_hat, commit_loss = self(audio_input, **kwargs)
             if self.train_discriminator:
 
@@ -215,6 +228,8 @@ class VocosExp(pl.LightningModule):
                     dataformats="HWC",
                 )
 
+            # self.manual_backward(loss)
+            # opt.step()
             return loss
 
     def on_validation_epoch_start(self):

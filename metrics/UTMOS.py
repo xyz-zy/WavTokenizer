@@ -24,7 +24,15 @@ class UTMOSScore:
         filepath = os.path.join(os.path.dirname(__file__), ckpt_path)
         if not os.path.exists(filepath):
             download_file(UTMOS_CKPT_URL, filepath)
-        self.model = BaselineLightningModule.load_from_checkpoint(filepath).eval().to(device)
+        # Change needed because new torch.load() default to weights_only=True
+        checkpoint = torch.load(filepath, map_location="cpu", weights_only=False)
+        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+            cfg = checkpoint.get("hyper_parameters", {}).get("cfg")
+            model = BaselineLightningModule(cfg)
+            model.load_state_dict(checkpoint["state_dict"])
+        else:
+            model = checkpoint
+        self.model = model.eval().to(device)
 
     def score(self, wavs: torch.tensor) -> torch.tensor:
         """
