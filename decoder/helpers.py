@@ -67,5 +67,11 @@ def gradient_norm(model: torch.nn.Module, norm_type: float = 2.0) -> torch.Tenso
         Tensor: Gradient norm.
     """
     grads = [p.grad for p in model.parameters() if p.grad is not None]
+    if not grads:
+        try:
+            device = next(model.parameters()).device
+        except StopIteration:
+            device = torch.device("cpu")
+        return torch.tensor(0.0, device=device)
     total_norm = torch.norm(torch.stack([torch.norm(g.detach(), norm_type) for g in grads]), norm_type)
     return total_norm

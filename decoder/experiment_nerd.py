@@ -18,6 +18,8 @@ from decoder.models import Backbone
 from decoder.modules import safe_log
 from decoder.pretrained_model import instantiate_class
 
+# from nerd.nerd import NERDConfig, NERDSampler, NERDRDEstimator, RDEstimatorConfig
+
 
 class VocosExp(pl.LightningModule):
     # noinspection PyUnusedLocal
@@ -40,6 +42,7 @@ class VocosExp(pl.LightningModule):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         use_discriminator: bool = True,
+        train_nerd_only: bool = False,
     ):
         """
         Args:
@@ -57,6 +60,7 @@ class VocosExp(pl.LightningModule):
             evaluate_pesq (bool, optional): If True, PESQ scores are computed for each validation run.
             evaluate_periodicty (bool, optional): If True, periodicity scores are computed for each validation run.
             use_discriminator: bool = True, Whether to use discriminators during training.
+            train_nerd_only: bool = False,
         """
         super().__init__()
         self.save_hyperparameters(ignore=["feature_extractor", "backbone", "head"])
@@ -104,8 +108,13 @@ class VocosExp(pl.LightningModule):
             {"params": self.head.parameters()},
         ]
 
+        nerd_params = [
+            {"params": self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.nerd_sampler.dec.parameters()}
+        ]
+
         opt_disc = torch.optim.AdamW(disc_params, lr=self.hparams.initial_learning_rate)
         opt_gen = torch.optim.AdamW(gen_params, lr=self.hparams.initial_learning_rate)
+        opt_nerd = torch.optim.AdamW(nerd_params, lr=self.hparams.initial_learning_rate)
 
         max_steps = self.trainer.max_steps // 2  # Max steps per optimizer
         scheduler_disc = transformers.get_cosine_schedule_with_warmup(
@@ -114,11 +123,15 @@ class VocosExp(pl.LightningModule):
         scheduler_gen = transformers.get_cosine_schedule_with_warmup(
             opt_gen, num_warmup_steps=self.hparams.num_warmup_steps, num_training_steps=max_steps,
         )
+        scheduler_nerd = transformers.get_cosine_schedule_with_warmup(
+            opt_nerd, num_warmup_steps=self.hparams.num_warmup_steps, num_training_steps=max_steps,
+        )
         return (
-            [opt_disc, opt_gen],
+            [opt_disc, opt_gen, opt_nerd],
             [
                 {"scheduler": scheduler_disc, "interval": "step"},
                 {"scheduler": scheduler_gen, "interval": "step"},
+                {"scheduler": scheduler_nerd, "interval": "step"},
             ],
         )
 
@@ -131,6 +144,24 @@ class VocosExp(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx, **kwargs):
         audio_input = batch
+
+        if self.hparams.train_nerd_only and optimizer_idx != 2:
+            return None #torch.tensor(0.0, device=self.device)
+        if self.hparams.train_nerd_only and optimizer_idx == 2:
+            with torch.no_grad():
+                features, _, commit_loss = self.feature_extractor(audio_input, **kwargs)
+                # print(f"{features.shape=}")
+                # (B, C, T) to # (B*T, C)
+                B, C, T = features.shape
+                features = features.permute(0, 2, 1).contiguous().view(B * T, C)
+                # print(f"{features.shape=}")
+            nerd_sampler = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.nerd_sampler
+            nerd_sampler.add_latents(features)
+            nerd_loss = nerd_sampler._train_step()
+            self.log("nerd/nerd_loss", nerd_loss, on_step=True, on_epoch=False, prog_bar=True)
+            # self.log("nerd/commit_loss", commit_loss, prog_bar=True)
+            # total_nerd_loss = nerd_loss + 1000 * commit_loss
+            return nerd_loss if nerd_sampler.buf.full else None #torch.tensor(0.0, device=self.device)
 
         # train discriminator
         if optimizer_idx == 0 and self.train_discriminator:
@@ -192,8 +223,6 @@ class VocosExp(pl.LightningModule):
             else:
                 loss_gen_mp = loss_gen_mrd = loss_fm_mp = loss_fm_mrd = loss_dac_1 = loss_dac_2 = 0
 
-            commit_loss_term = 1000 * commit_loss if self.train_discriminator else commit_loss
-
             mel_loss = self.melspec_loss(audio_hat, audio_input)
             loss = (
                 loss_gen_mp
@@ -201,7 +230,7 @@ class VocosExp(pl.LightningModule):
                 + loss_fm_mp
                 + self.hparams.mrd_loss_coeff * loss_fm_mrd
                 + self.mel_loss_coeff * mel_loss
-                + commit_loss_term
+                + 1000 * commit_loss
                 + loss_dac_1
                 + loss_dac_2
             )
@@ -386,6 +415,7 @@ class WavTokenizer(VocosExp):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         use_discriminator: bool = True,
+        train_nerd_only: bool = False,
     ):
         super().__init__(
             feature_extractor,
@@ -405,6 +435,7 @@ class WavTokenizer(VocosExp):
             evaluate_periodicty,
             resume,
             use_discriminator,
+            train_nerd_only,
         )
         # Override with conditional discriminators
         # VocosExp.__init__(self, feature_extractor, backbone, head, resume_config, resume_model)

@@ -41,6 +41,8 @@ import torch.nn.functional as F
 
 from .. import distrib
 
+from nerd.nerd import NERDConfig, NERDSampler, NERDRDEstimator, RDEstimatorConfig
+
 
 def default(val: tp.Any, d: tp.Any) -> tp.Any:
     return val if val is not None else d
@@ -120,6 +122,7 @@ class EuclideanCodebook(nn.Module):
         decay: float = 0.99,
         epsilon: float = 1e-5,
         threshold_ema_dead_code: int = 2,
+        use_nerd: bool = False,
     ):
         super().__init__()
         self.decay = decay
@@ -136,6 +139,12 @@ class EuclideanCodebook(nn.Module):
         self.register_buffer("cluster_size", torch.zeros(codebook_size))
         self.register_buffer("embed", embed)
         self.register_buffer("embed_avg", embed.clone())
+
+        if use_nerd:
+            self.nerd_config = NERDConfig(hidden=dim)
+            self.nerd_sampler = NERDSampler(dim, self.nerd_config, device=embed.device)
+            self.rd_estimator_config = RDEstimatorConfig()
+            self.nerd_rd_estimator = NERDRDEstimator(self.nerd_sampler, self.rd_estimator_config)
 
     @torch.jit.ignore
     def init_embed_(self, data):
@@ -258,6 +267,7 @@ class VectorQuantization(nn.Module):
         kmeans_iters: int = 50,
         threshold_ema_dead_code: int = 2,
         commitment_weight: float = 1.,
+        use_nerd: bool = False,
     ):
         super().__init__()
         _codebook_dim: int = default(codebook_dim, dim)
@@ -272,7 +282,7 @@ class VectorQuantization(nn.Module):
         self._codebook = EuclideanCodebook(dim=_codebook_dim, codebook_size=codebook_size,
                                            kmeans_init=kmeans_init, kmeans_iters=kmeans_iters,
                                            decay=decay, epsilon=epsilon,
-                                           threshold_ema_dead_code=threshold_ema_dead_code)
+                                           threshold_ema_dead_code=threshold_ema_dead_code, use_nerd=use_nerd)
         self.codebook_size = codebook_size
 
     @property
