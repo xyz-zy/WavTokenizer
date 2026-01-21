@@ -6,25 +6,25 @@ python latent_space_viz.py \
   --input_path ./test-clean_filelist.txt \
   --config_path ../WavTokenizer_models/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml \
   --model_path ../WavTokenizer_models/WavTokenizer_small_600_24k_4096.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000
+  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000 --tsne_with_codebook
 
 python latent_space_viz.py \
   --input_path ./test_filelist.txt \
   --config_path ../WavTokenizer_models/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml \
   --model_path ../WavTokenizer_models/WavTokenizer_small_600_24k_4096.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000
+  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000 --tsne_with_codebook
 
 python latent_space_viz.py \
   --input_path ./test-clean_filelist.txt \
   --config_path ../WavTokenizer_models/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn.yaml \
   --model_path ../WavTokenizer_models/WavTokenizer_small_320_24k_4096.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000
+  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000 --tsne_with_codebook
 
 python latent_space_viz.py \
   --input_path ./test_filelist.txt \
   --config_path ../WavTokenizer_models/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn.yaml \
   --model_path ../WavTokenizer_models/WavTokenizer_small_320_24k_4096.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000
+  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000 --tsne_with_codebook
 """
 
 import argparse
@@ -36,12 +36,17 @@ import numpy as np
 import torch
 import torchaudio
 from decoder.pretrained import WavTokenizer
-from tqdm import tqdm
 from sklearn.manifold import TSNE
+from tqdm import tqdm
 
 
 def collect_vectors(
-    wavtokenizer, filepaths, device, max_vectors_per_file=200, max_total_vectors=20000
+    wavtokenizer,
+    filepaths,
+    device,
+    max_vectors_per_file=200,
+    max_total_vectors=20000,
+    stop_at_global_cap: bool = False,
 ):
     vectors = []
     labels = []
@@ -74,9 +79,11 @@ def collect_vectors(
         labels.extend([idx] * sel.shape[0])
 
         # enforce global cap
-        total = sum(v.shape[0] for v in vectors)
-        if total > max_total_vectors:
-            break
+        if stop_at_global_cap:
+            total = sum([v.shape[0] for v in vectors])
+            if total >= max_total_vectors:
+                print(f"Reached global cap of {max_total_vectors} vectors; stopping.")
+                break
 
     if len(vectors) == 0:
         return None, None
@@ -126,7 +133,9 @@ def run_pca(X, n_components, random_seed):
         return X, None
 
 
-def run_tsne(X_proc, codebook_proc, perplexity, n_iter, random_seed, use_codebook: bool):
+def run_tsne(
+    X_proc, codebook_proc, perplexity, n_iter, random_seed, use_codebook: bool
+):
     tsne = TSNE(
         n_components=2,
         perplexity=perplexity,
@@ -144,24 +153,32 @@ def run_tsne(X_proc, codebook_proc, perplexity, n_iter, random_seed, use_codeboo
     return X_tsne, codebook_tsne
 
 
-def plot_latent_tsne(out_folder, X_tsne, codebook_tsne, codebook_vectors, y, plot_codebook: bool):
+def plot_latent_tsne(
+    out_folder, X_tsne, codebook_tsne, codebook_vectors, y, plot_codebook: bool
+):
     if plot_codebook:
         output_file = out_folder / "latent_tsne_codebook.png"
     else:
         output_file = out_folder / "latent_tsne.png"
     import matplotlib.pyplot as plt
 
-    cmap = plt.get_cmap("tab20")
-    n_files = int(y.max()) + 1
-    colors = [cmap(i % 20) for i in range(n_files)]
-    point_colors = [colors[label % 20] for label in y]
+    n_bins = 100
 
-    plt.figure(figsize=(10, 8))
-    plt.scatter(
+    # joint scatter with marginal histograms
+    fig = plt.figure(figsize=(10, 10))
+    gs = fig.add_gridspec(
+        2, 2, width_ratios=(4, 1), height_ratios=(1, 4), hspace=0.05, wspace=0.05
+    )
+    ax_histx = fig.add_subplot(gs[0, 0])
+    ax_main = fig.add_subplot(gs[1, 0])
+    ax_histy = fig.add_subplot(gs[1, 1])
+
+    # main scatter
+    ax_main.scatter(
         X_tsne[:, 0], X_tsne[:, 1], c="tab:blue", s=4, alpha=0.6, label="latents"
     )
     if codebook_tsne is not None and plot_codebook:
-        plt.scatter(
+        ax_main.scatter(
             codebook_tsne[:, 0],
             codebook_tsne[:, 1],
             c="tab:orange",
@@ -171,15 +188,142 @@ def plot_latent_tsne(out_folder, X_tsne, codebook_tsne, codebook_vectors, y, plo
             edgecolors="k",
             label="codebook",
         )
-    elif codebook_vectors is not None:
-        pass
 
-    plt.title("t-SNE of encoder latents (pre-quant) with codebook overlay")
-    plt.xlabel("t-SNE dim 1")
-    plt.ylabel("t-SNE dim 2")
-    plt.legend()
-    plt.savefig(output_file, dpi=200)
+    ax_main.set_xlabel("t-SNE dim 1")
+    ax_main.set_ylabel("t-SNE dim 2")
+    ax_main.legend()
+
+    # top marginal (x)
+    ax_histx.hist(X_tsne[:, 0], bins=n_bins, color="tab:blue", alpha=0.6, density=True)
+    if codebook_tsne is not None and plot_codebook:
+        ax_histx.hist(
+            codebook_tsne[:, 0],
+            bins=n_bins,
+            color="tab:orange",
+            alpha=0.6,
+            density=True,
+        )
+    ax_histx.axis("off")
+
+    # right marginal (y)
+    ax_histy.hist(
+        X_tsne[:, 1],
+        bins=n_bins,
+        orientation="horizontal",
+        color="tab:blue",
+        alpha=0.6,
+        density=True,
+    )
+    if codebook_tsne is not None and plot_codebook:
+        ax_histy.hist(
+            codebook_tsne[:, 1],
+            bins=n_bins,
+            orientation="horizontal",
+            color="tab:orange",
+            alpha=0.6,
+            density=True,
+        )
+    ax_histy.axis("off")
+
+    plt.suptitle("t-SNE of encoder latents (pre-quant) with codebook overlay")
+    fig.savefig(output_file, dpi=200)
+    plt.close(fig)
     print("Wrote t-SNE plot to", output_file)
+
+
+def plot_pca_components(out_folder, X, codebook_vectors, random_seed):
+    """Compute top-2 PCA on X and project codebook_vectors (if given). Save plots & arrays."""
+    try:
+        from sklearn.decomposition import PCA
+    except Exception as e:
+        print("Skipping PCA-2 visualization (sklearn not available):", e)
+        return
+
+    try:
+        pca2 = PCA(n_components=2, random_state=random_seed)
+        X_pca = pca2.fit_transform(X)
+    except Exception as e:
+        print("PCA-2 failed:", e)
+        return
+
+    if codebook_vectors is not None:
+        output_filestem = "latent_pca2_codebook"
+    else:
+        output_filestem = "latent_pca2"
+
+    np.save(out_folder / f"{output_filestem}.npy", X_pca)
+
+    import matplotlib.pyplot as plt
+
+    n_bins = 100
+
+    # joint scatter with marginal histograms
+    fig = plt.figure(figsize=(8, 8))
+    gs = fig.add_gridspec(
+        2, 2, width_ratios=(4, 1), height_ratios=(1, 4), hspace=0.05, wspace=0.05
+    )
+    ax_histx = fig.add_subplot(gs[0, 0])
+    ax_main = fig.add_subplot(gs[1, 0])
+    ax_histy = fig.add_subplot(gs[1, 1])
+
+    ax_main.scatter(
+        X_pca[:, 0], X_pca[:, 1], c="tab:blue", s=6, alpha=0.6, label="latents"
+    )
+
+    cb_pca = None
+    if codebook_vectors is not None:
+        try:
+            cb_pca = pca2.transform(codebook_vectors)
+            np.save(out_folder / "codebook_pca2.npy", cb_pca)
+            ax_main.scatter(
+                cb_pca[:, 0],
+                cb_pca[:, 1],
+                c="tab:orange",
+                s=24,
+                alpha=0.95,
+                edgecolors="k",
+                label="codebook",
+            )
+        except Exception as e:
+            print("Failed to project codebook into PCA-2 space:", e)
+
+    ax_main.set_xlabel("PC 1")
+    ax_main.set_ylabel("PC 2")
+    ax_main.legend()
+
+    # top marginal (x)
+    ax_histx.hist(X_pca[:, 0], bins=n_bins, color="tab:blue", alpha=0.6, density=True)
+    if cb_pca is not None:
+        ax_histx.hist(
+            cb_pca[:, 0], bins=n_bins, color="tab:orange", alpha=0.6, density=True
+        )
+    ax_histx.axis("off")
+
+    # right marginal (y)
+    ax_histy.hist(
+        X_pca[:, 1],
+        bins=n_bins,
+        orientation="horizontal",
+        color="tab:blue",
+        alpha=0.6,
+        density=True,
+    )
+    if cb_pca is not None:
+        ax_histy.hist(
+            cb_pca[:, 1],
+            bins=n_bins,
+            orientation="horizontal",
+            color="tab:orange",
+            alpha=0.6,
+            density=True,
+        )
+    ax_histy.axis("off")
+
+    plt.suptitle("Top-2 PCA of encoder latents (pre-quant) with codebook overlay")
+    out_file = out_folder / f"{output_filestem}.png"
+    fig.savefig(out_file, dpi=200)
+    plt.close(fig)
+    print("Wrote PCA-2 plot to", out_file)
 
 
 def main():
@@ -205,15 +349,26 @@ def main():
     )
     parser.add_argument("--tsne_perplexity", type=float, default=30.0)
     parser.add_argument("--tsne_iter", type=int, default=1000)
-    parser.add_argument("--tsne_with_codebook", action="store_true", help="Use codebook vectors in t-SNE")
+    parser.add_argument(
+        "--tsne_with_codebook",
+        action="store_true",
+        help="Use codebook vectors in t-SNE",
+    )
     parser.add_argument("--random_seed", type=int, default=42)
+    parser.add_argument(
+        "--stop_at_global_cap",
+        action="store_true",
+        help="Stop processing files when global cap is reached",
+    )
     args = parser.parse_args()
 
     device = torch.device(
         args.device if torch.cuda.is_available() or "cpu" in args.device else "cpu"
     )
     foldername = "tsne_with_codebook" if args.tsne_with_codebook else "tsne_no_codebook"
-    out_folder = args.out_folder / args.model_path.stem / args.input_path.stem / foldername
+    out_folder = (
+        args.out_folder / args.model_path.stem / args.input_path.stem / foldername
+    )
     os.makedirs(out_folder, exist_ok=True)
 
     print("Loading model...")
@@ -225,7 +380,12 @@ def main():
         files = [l.strip() for l in f if l.strip()]
 
     X, y = collect_vectors(
-        wavtokenizer, files, device, args.max_vectors_per_file, args.max_total_vectors
+        wavtokenizer,
+        files,
+        device,
+        args.max_vectors_per_file,
+        args.max_total_vectors,
+        stop_at_global_cap=args.stop_at_global_cap,
     )
     if X is None:
         print("No vectors collected; exiting")
@@ -239,8 +399,17 @@ def main():
     # extract codebook vectors and project to same space
     codebook_vectors, codebook_proc = collect_codebook_vectors(wavtokenizer, pca)
 
+    # Plot top-2 PCA components for latents and codebook (saves arrays and PNG)
+    plot_pca_components(out_folder, X, codebook_vectors, args.random_seed)
+    plot_pca_components(out_folder, X, None, args.random_seed)
+
     X_tsne, codebook_tsne = run_tsne(
-        X_proc, codebook_proc, args.tsne_perplexity, args.tsne_iter, args.random_seed, use_codebook=args.tsne_with_codebook
+        X_proc,
+        codebook_proc,
+        args.tsne_perplexity,
+        args.tsne_iter,
+        args.random_seed,
+        use_codebook=args.tsne_with_codebook,
     )
     if X_tsne is None:
         return
@@ -254,8 +423,12 @@ def main():
         if "codebook_tsne" in locals() and codebook_tsne is not None:
             np.save(out_folder / "codebook_tsne.npy", codebook_tsne)
 
-    plot_latent_tsne(out_folder, X_tsne, codebook_tsne, codebook_vectors, y, plot_codebook=True)
-    plot_latent_tsne(out_folder, X_tsne, codebook_tsne, codebook_vectors, y, plot_codebook=False)
+    plot_latent_tsne(
+        out_folder, X_tsne, codebook_tsne, codebook_vectors, y, plot_codebook=True
+    )
+    plot_latent_tsne(
+        out_folder, X_tsne, codebook_tsne, codebook_vectors, y, plot_codebook=False
+    )
 
 
 if __name__ == "__main__":
