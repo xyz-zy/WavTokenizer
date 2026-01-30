@@ -4,14 +4,14 @@ data:
   class_path: decoder.dataset.VocosDataModule
   init_args:
     train_params:
-      filelist_path: /orcd/scratch/orcd/009/lxz/WavTokenizer/train_filelist.txt
+      filelist_path: train_filelist.txt
       sampling_rate: 24000
       num_samples: 72000
       batch_size: 40  # 20
       num_workers: 8
 
     val_params:
-      filelist_path: /orcd/scratch/orcd/009/lxz/WavTokenizer/dev_filelist.txt
+      filelist_path: dev_filelist.txt
       sampling_rate: 24000
       num_samples: 72000
       batch_size: 10   # 10
@@ -50,6 +50,19 @@ model:
         vq_bins: 4096
         vq_kmeans: 200
         use_nerd: True
+
+        nerd_config:
+          class_path: nerd.nerd.NERDConfig
+          init_args:
+            dz: 8
+            hidden: 256
+            Kz: 256
+            batch_u: 512
+            beta: 10.0
+            lr: 5e-4
+            buffer_size: 200_000
+            rd_Kz: 1024
+            rd_bisect_iters: 12
 
     backbone:
       class_path: decoder.models.VocosBackbone
@@ -91,7 +104,7 @@ trainer:
 
   # Lightning calculates max_steps across all optimizer steps (rather than number of batches)
   # This equals to 1M steps per generator and 1M per discriminator
-  max_steps: 25000 # A little over 3 epochs at BS40 on LibriTTS Train (8049 batches per epoch)
+  max_steps: 72500 # A little over 3 epochs at BS40 on LibriTTS Train (8049 batches per epoch)
   # max_steps: 500000
   # You might want to limit val batches when evaluating all the metrics, as they are time-consuming
   limit_val_batches: 10

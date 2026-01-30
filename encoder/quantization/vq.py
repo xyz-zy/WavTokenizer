@@ -14,7 +14,7 @@ import torch
 from torch import nn
 
 from .core_vq import ResidualVectorQuantization,LanguageVectorQuantization
-
+from nerd.nerd import NERDConfig
 
 @dataclass
 class QuantizedResult:
@@ -48,6 +48,9 @@ class ResidualVectorQuantizer(nn.Module):
         kmeans_iters: int = 50,
         threshold_ema_dead_code: int = 2,
         use_nerd: bool = False,
+        replace_with_nerd: bool = False,
+        always_respawn_all: bool = False,
+        nerd_config: NERDConfig = None,
     ):
         super().__init__()
         self.n_q = n_q
@@ -71,6 +74,9 @@ class ResidualVectorQuantizer(nn.Module):
             kmeans_iters=self.kmeans_iters,
             threshold_ema_dead_code=self.threshold_ema_dead_code,
             use_nerd=use_nerd,
+            replace_with_nerd=replace_with_nerd,
+            always_respawn_all=always_respawn_all,
+            nerd_config=nerd_config,
         )
         # self.vq = ResidualVectorQuantization(
         #     dim=self.dimension,

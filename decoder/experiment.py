@@ -167,6 +167,9 @@ class VocosExp(pl.LightningModule):
             # _, opt = self.optimizers()
             # opt.zero_grad()
             audio_hat, commit_loss = self(audio_input, **kwargs)
+            # Mean squared error between prediction and reference for logging
+            mse = torch.mean((audio_hat - audio_input) ** 2)
+            self.log("train/mse", mse, prog_bar=True)
             if self.train_discriminator:
 
                 loss_dac_1,loss_dac_2 = self.dacdiscriminator.generator_loss(audio_hat.unsqueeze(1),audio_input.unsqueeze(1))
@@ -278,6 +281,9 @@ class VocosExp(pl.LightningModule):
         mel_loss = self.melspec_loss(audio_hat.unsqueeze(1), audio_input.unsqueeze(1))
         total_loss = mel_loss + (5 - utmos_score) + (5 - pesq_score) + 1000 * commit_loss
 
+        # Mean squared error between prediction and reference (averaged over all samples)
+        mse = torch.mean((audio_hat - audio_input) ** 2)
+
         return {
             "val_loss": total_loss,
             "mel_loss": mel_loss,
@@ -286,6 +292,8 @@ class VocosExp(pl.LightningModule):
             "periodicity_loss": periodicity_loss,
             "pitch_loss": pitch_loss,
             "f1_score": f1_score,
+            "mse": mse,
+            "commit_loss": commit_loss,
             "audio_input": audio_input[0],
             "audio_pred": audio_hat[0],
         }
@@ -320,6 +328,8 @@ class VocosExp(pl.LightningModule):
         periodicity_loss = np.array([x["periodicity_loss"] for x in outputs]).mean()
         pitch_loss = np.array([x["pitch_loss"] for x in outputs]).mean()
         f1_score = np.array([x["f1_score"] for x in outputs]).mean()
+        commit_loss = torch.stack([x["commit_loss"] for x in outputs]).mean()
+        mse = torch.stack([x["mse"] for x in outputs]).mean()
 
         self.log("val_loss", avg_loss, sync_dist=True)
         self.log("val/mel_loss", mel_loss, sync_dist=True)
@@ -328,6 +338,8 @@ class VocosExp(pl.LightningModule):
         self.log("val/periodicity_loss", periodicity_loss, sync_dist=True)
         self.log("val/pitch_loss", pitch_loss, sync_dist=True)
         self.log("val/f1_score", f1_score, sync_dist=True)
+        self.log("val/commit_loss", commit_loss, sync_dist=True)
+        self.log("val/mse", mse, sync_dist=True)
 
     @property
     def global_step(self):

@@ -9,6 +9,8 @@ from encoder.modules import SEANetEncoder, SEANetDecoder
 from encoder import EncodecModel
 from encoder.quantization import ResidualVectorQuantizer
 
+from nerd.nerd import NERDConfig
+
 
 class FeatureExtractor(nn.Module):
     """Base class for feature extractors."""
@@ -62,6 +64,9 @@ class EncodecFeatures(FeatureExtractor):
         vq_bins: int = 16384,
         vq_kmeans: int = 800,
         use_nerd: bool = False,
+        replace_with_nerd: bool = False,
+        always_respawn_all: bool = False,
+        nerd_config: NERDConfig = None,
     ):
         super().__init__()
 
@@ -78,7 +83,10 @@ class EncodecFeatures(FeatureExtractor):
                                 kernel_size=7, residual_kernel_size=3, last_kernel_size=7, dilation_base=2,
                                 true_skip=False, compress=2)
         quantizer = ResidualVectorQuantizer(dimension=512, n_q=n_q, bins=vq_bins, kmeans_iters=vq_kmeans,
-                                            decay=0.99, kmeans_init=True, use_nerd=use_nerd)
+                                            decay=0.99, kmeans_init=True,
+                                            use_nerd=use_nerd, replace_with_nerd=replace_with_nerd,
+                                            always_respawn_all=always_respawn_all,
+                                            nerd_config=nerd_config)
 
         # breakpoint()
         if encodec_model == "encodec_24khz":

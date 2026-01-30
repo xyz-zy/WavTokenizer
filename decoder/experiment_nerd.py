@@ -17,9 +17,159 @@ from decoder.loss import DiscriminatorLoss, GeneratorLoss, FeatureMatchingLoss, 
 from decoder.models import Backbone
 from decoder.modules import safe_log
 from decoder.pretrained_model import instantiate_class
+from nerd.nerd import NERDConfig
 
-# from nerd.nerd import NERDConfig, NERDSampler, NERDRDEstimator, RDEstimatorConfig
+from einops import rearrange
 
+# from nerd.nerd import NERDConfig#, NERDSampler, NERDRDEstimator, RDEstimatorConfig
+
+def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
+    from sklearn.decomposition import PCA
+    import matplotlib.pyplot as plt
+    # print(X.shape)
+
+    n_comp = min(4, X.shape[1])
+    pca = PCA(n_components=n_comp, random_state=random_seed)
+    X_pca_full = pca.fit_transform(X)
+
+    suf = f"_{suffix}" if suffix else ""
+
+    def _plot_pca_pair(
+        X2, cb2, filestem, codebook_name, x_label, y_label, title
+    ):
+        # np.save(out_folder / f"{filestem}.npy", X2)
+        # if cb2 is not None:
+        #     np.save(out_folder / f"{codebook_name}.npy", cb2)
+
+        n_bins = 100
+
+        fig = plt.figure(figsize=(12, 6), constrained_layout=True)
+        gs = fig.add_gridspec(1, 2, wspace=0.2)
+
+        def _panel_axes(spec):
+            sub = spec.subgridspec(
+                2, 2, width_ratios=(4, 1), height_ratios=(1, 4), hspace=0.05, wspace=0.05
+            )
+            ax_histx = fig.add_subplot(sub[0, 0])
+            ax_main = fig.add_subplot(sub[1, 0])
+            ax_histy = fig.add_subplot(sub[1, 1])
+            return ax_main, ax_histx, ax_histy
+
+        def _plot_with_hists(ax_main, ax_histx, ax_histy, add_codebook, panel_title):
+            ax_main.scatter(
+                X2[:, 0], X2[:, 1], c="tab:blue", s=6, alpha=0.6, label="latents"
+            )
+            if add_codebook and cb2 is not None:
+                ax_main.scatter(
+                    cb2[:, 0],
+                    cb2[:, 1],
+                    c="tab:orange",
+                    s=24,
+                    alpha=0.95,
+                    edgecolors="k",
+                    label="codebook",
+                )
+            ax_main.set_xlabel(x_label)
+            ax_main.set_ylabel(y_label)
+            ax_main.set_title(panel_title)
+            if add_codebook and cb2 is not None:
+                ax_main.legend()
+
+            ax_histx.hist(
+                X2[:, 0], bins=n_bins, color="tab:blue", alpha=0.6, density=True
+            )
+            if add_codebook and cb2 is not None:
+                ax_histx.hist(
+                    cb2[:, 0], bins=n_bins, color="tab:orange", alpha=0.6, density=True
+                )
+            ax_histx.axis("off")
+
+            ax_histy.hist(
+                X2[:, 1],
+                bins=n_bins,
+                orientation="horizontal",
+                color="tab:blue",
+                alpha=0.6,
+                density=True,
+            )
+            if add_codebook and cb2 is not None:
+                ax_histy.hist(
+                    cb2[:, 1],
+                    bins=n_bins,
+                    orientation="horizontal",
+                    color="tab:orange",
+                    alpha=0.6,
+                    density=True,
+                )
+            ax_histy.axis("off")
+
+        def _shared_limits():
+            data = X2
+            if cb2 is not None:
+                data = np.concatenate([X2, cb2], axis=0)
+            x_min = float(np.nanmin(data[:, 0]))
+            x_max = float(np.nanmax(data[:, 0]))
+            y_min = float(np.nanmin(data[:, 1]))
+            y_max = float(np.nanmax(data[:, 1]))
+            x_pad = 0.05 * (x_max - x_min) if x_max > x_min else 1.0
+            y_pad = 0.05 * (y_max - y_min) if y_max > y_min else 1.0
+            return (x_min - x_pad, x_max + x_pad), (y_min - y_pad, y_max + y_pad)
+
+        xlim, ylim = _shared_limits()
+
+        ax_main_l, ax_histx_l, ax_histy_l = _panel_axes(gs[0])
+        _plot_with_hists(
+            ax_main_l, ax_histx_l, ax_histy_l, add_codebook=False, panel_title="latents"
+        )
+        ax_main_l.set_xlim(xlim)
+        ax_main_l.set_ylim(ylim)
+
+        ax_main_r, ax_histx_r, ax_histy_r = _panel_axes(gs[1])
+        _plot_with_hists(
+            ax_main_r,
+            ax_histx_r,
+            ax_histy_r,
+            add_codebook=True,
+            panel_title="latents + codebook",
+        )
+        ax_main_r.set_xlim(xlim)
+        ax_main_r.set_ylim(ylim)
+
+        fig.suptitle(title)
+        # out_file = out_folder / f"{filestem}.png"
+        return fig
+        # fig.savefig(out_file, dpi=200)
+        # plt.close(fig)
+        # print("Wrote PCA plot to", out_file)
+
+    # Prepare PC1-2
+    X_pca2 = X_pca_full[:, :2]
+    cb_pca_full = None
+    cb_pca2 = None
+    if codebook_vectors is not None:
+        try:
+            cb_pca_full = pca.transform(codebook_vectors)
+            cb_pca2 = cb_pca_full[:, :2]
+        except Exception as e:
+            print("Failed to project codebook into PCA space:", e)
+
+    if codebook_vectors is not None:
+        filestem2 = f"latent_pca2_codebook{suf}"
+        codebook_name2 = f"codebook_pca2{suf}"
+    else:
+        filestem2 = f"latent_pca2{suf}"
+        codebook_name2 = None
+
+    fig12 =_plot_pca_pair(
+        X_pca2,
+        cb_pca2,
+        filestem2,
+        codebook_name2,
+        "PC 1",
+        "PC 2",
+        "Top-2 PCA of encoder latents (pre-quant) with codebook overlay",
+    )
+    return fig12
 
 class VocosExp(pl.LightningModule):
     # noinspection PyUnusedLocal
@@ -42,7 +192,10 @@ class VocosExp(pl.LightningModule):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         use_discriminator: bool = True,
+        use_nerd: bool = False,
         train_nerd_only: bool = False,
+        commit_loss_coef: float = 10.0,
+        respawn_on_nerd_update: bool = False,
     ):
         """
         Args:
@@ -89,6 +242,7 @@ class VocosExp(pl.LightningModule):
         self.train_discriminator = False
         self.base_mel_coeff = self.mel_loss_coeff = mel_loss_coeff
 
+        # self.nerd_config = nerd_config
         # """
         # RuntimeError: Training with multiple optimizers is only supported with manual optimization. 
         # Set `self.automatic_optimization = False`, then access your optimizers in `training_step` 
@@ -108,13 +262,8 @@ class VocosExp(pl.LightningModule):
             {"params": self.head.parameters()},
         ]
 
-        nerd_params = [
-            {"params": self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.nerd_sampler.dec.parameters()}
-        ]
-
         opt_disc = torch.optim.AdamW(disc_params, lr=self.hparams.initial_learning_rate)
         opt_gen = torch.optim.AdamW(gen_params, lr=self.hparams.initial_learning_rate)
-        opt_nerd = torch.optim.AdamW(nerd_params, lr=self.hparams.initial_learning_rate)
 
         max_steps = self.trainer.max_steps // 2  # Max steps per optimizer
         scheduler_disc = transformers.get_cosine_schedule_with_warmup(
@@ -123,15 +272,31 @@ class VocosExp(pl.LightningModule):
         scheduler_gen = transformers.get_cosine_schedule_with_warmup(
             opt_gen, num_warmup_steps=self.hparams.num_warmup_steps, num_training_steps=max_steps,
         )
-        scheduler_nerd = transformers.get_cosine_schedule_with_warmup(
-            opt_nerd, num_warmup_steps=self.hparams.num_warmup_steps, num_training_steps=max_steps,
-        )
+
+        if self.hparams.use_nerd:
+            codebook = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook
+            nerd_params = [
+                {"params": codebook.nerd_sampler.dec.parameters()}
+            ]
+            opt_nerd = torch.optim.AdamW(nerd_params, lr=codebook.nerd_config.lr)
+            scheduler_nerd = transformers.get_cosine_schedule_with_warmup(
+                opt_nerd, num_warmup_steps=self.hparams.num_warmup_steps, num_training_steps=max_steps,
+            )
+
+            return (
+                [opt_nerd, opt_disc, opt_gen],
+                [
+                    {"scheduler": scheduler_nerd, "interval": "step"},
+                    {"scheduler": scheduler_disc, "interval": "step"},
+                    {"scheduler": scheduler_gen, "interval": "step"},
+                ],
+            )
+
         return (
-            [opt_disc, opt_gen, opt_nerd],
+            [opt_disc, opt_gen],
             [
                 {"scheduler": scheduler_disc, "interval": "step"},
                 {"scheduler": scheduler_gen, "interval": "step"},
-                {"scheduler": scheduler_nerd, "interval": "step"},
             ],
         )
 
@@ -145,26 +310,58 @@ class VocosExp(pl.LightningModule):
     def training_step(self, batch, batch_idx, optimizer_idx, **kwargs):
         audio_input = batch
 
-        if self.hparams.train_nerd_only and optimizer_idx != 2:
-            return None #torch.tensor(0.0, device=self.device)
-        if self.hparams.train_nerd_only and optimizer_idx == 2:
+        if self.hparams.use_nerd and self.hparams.train_nerd_only and optimizer_idx != 0:
+            return None
+
+        if optimizer_idx == 0 and self.hparams.use_nerd:
             with torch.no_grad():
-                features, _, commit_loss = self.feature_extractor(audio_input, **kwargs)
+                # print(f"{audio_input.shape=}")
+                audio_input = audio_input.unsqueeze(1)
+                features = self.feature_extractor.encodec.encoder(audio_input)
+                # print(f"{features.shape=}")
+                features = rearrange(features, "b d n -> b n d")
+                features = self.feature_extractor.encodec.quantizer.vq.layers[0].project_in(features)
                 # print(f"{features.shape=}")
                 # (B, C, T) to # (B*T, C)
-                B, C, T = features.shape
-                features = features.permute(0, 2, 1).contiguous().view(B * T, C)
+                B, T, C = features.shape
+                features = features.contiguous().view(B * T, C)
+                # 40 * 225 = 9000
                 # print(f"{features.shape=}")
+            features = features.detach()
             nerd_sampler = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.nerd_sampler
             nerd_sampler.add_latents(features)
+            # print(f"{next(nerd_sampler.dec.parameters()).device=}")
             nerd_loss = nerd_sampler._train_step()
             self.log("nerd/nerd_loss", nerd_loss, on_step=True, on_epoch=False, prog_bar=True)
+            self.log("nerd/sigma", nerd_sampler.dec.sigma, on_step=True, on_epoch=False, prog_bar=True)
+
+            if (batch_idx+1) % 1000 == 0:
+                features = features.cpu().numpy()
+                nerd_codebook = nerd_sampler.sample(1024)
+                fig = plot_pca_components(features, nerd_codebook.cpu().numpy(), 42)
+                
+                self.logger.experiment.add_figure(
+                    f"nerd_latent_space/pca_step_{self.global_step}", fig, global_step=self.global_step
+                )
+                self.logger.experiment.flush()
+
+                # codebook = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.embed.cpu().numpy()
+                # fig_cb = plot_pca_components(features, codebook, 42)
+                # self.logger.experiment.add_figure(
+                #     f"codebook_latent_space/pca_step_{self.global_step}", fig_cb, global_step=self.global_step
+                # )
+            
+            if self.hparams.respawn_on_nerd_update:
+                # respawn dead codewords
+                codebook = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook
+                codebook.replace_all_with_nerd()
             # self.log("nerd/commit_loss", commit_loss, prog_bar=True)
             # total_nerd_loss = nerd_loss + 1000 * commit_loss
             return nerd_loss if nerd_sampler.buf.full else None #torch.tensor(0.0, device=self.device)
 
         # train discriminator
-        if optimizer_idx == 0 and self.train_discriminator:
+        discriminator_optimizer_idx = 1 if self.hparams.use_nerd else 0
+        if optimizer_idx == discriminator_optimizer_idx and self.train_discriminator:
             # opt, _ = self.optimizers()
             # opt.zero_grad()
             with torch.no_grad():
@@ -194,10 +391,14 @@ class VocosExp(pl.LightningModule):
             return loss
 
         # train generator
-        if optimizer_idx == 1:
+        generator_optimizer_idx = 2 if self.hparams.use_nerd else 1
+        if optimizer_idx == generator_optimizer_idx:
             # _, opt = self.optimizers()
             # opt.zero_grad()
             audio_hat, commit_loss = self(audio_input, **kwargs)
+            # Mean squared error between prediction and reference for logging
+            mse = torch.mean((audio_hat - audio_input) ** 2)
+            self.log("train/mse", mse, on_step=True, prog_bar=True)
             if self.train_discriminator:
 
                 loss_dac_1,loss_dac_2 = self.dacdiscriminator.generator_loss(audio_hat.unsqueeze(1),audio_input.unsqueeze(1))
@@ -222,6 +423,7 @@ class VocosExp(pl.LightningModule):
                 self.log("generator/loss_dac_2", loss_dac_2)
             else:
                 loss_gen_mp = loss_gen_mrd = loss_fm_mp = loss_fm_mrd = loss_dac_1 = loss_dac_2 = 0
+            commit_loss_coef = 1000 if self.train_discriminator else self.hparams.commit_loss_coef
 
             mel_loss = self.melspec_loss(audio_hat, audio_input)
             loss = (
@@ -230,38 +432,64 @@ class VocosExp(pl.LightningModule):
                 + loss_fm_mp
                 + self.hparams.mrd_loss_coeff * loss_fm_mrd
                 + self.mel_loss_coeff * mel_loss
-                + 1000 * commit_loss
+                + commit_loss_coef * commit_loss
                 + loss_dac_1
                 + loss_dac_2
             )
 
-            self.log("generator/total_loss", loss, prog_bar=True)
-            self.log("mel_loss_coeff", self.mel_loss_coeff)
-            self.log("generator/mel_loss", mel_loss)
-            self.log("commit_loss", commit_loss)
+            # self.log("generator/total_loss", loss, prog_bar=True)
+            self.log("mel_loss_coeff", self.mel_loss_coeff, on_step=True, prog_bar=False)
+            self.log("generator/mel_loss", mel_loss, on_step=True, prog_bar=False)
 
-            if self.global_step % 1000 == 0 and self.global_rank == 0:
-                self.logger.experiment.add_audio(
-                    "train/audio_in", audio_input[0].data.cpu(), self.global_step, self.hparams.sample_rate
-                )
-                self.logger.experiment.add_audio(
-                    "train/audio_pred", audio_hat[0].data.cpu(), self.global_step, self.hparams.sample_rate
-                )
+            self.log("quantizer/commit_loss", commit_loss, on_step=True, prog_bar=False)
+            expired_codes = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.expired_codes
+            self.log("quantizer/expired_codes", expired_codes, on_step=True, prog_bar=True)
+
+            if (batch_idx+1) % 1000 == 0:
                 with torch.no_grad():
-                    mel = safe_log(self.melspec_loss.mel_spec(audio_input[0]))
-                    mel_hat = safe_log(self.melspec_loss.mel_spec(audio_hat[0]))
-                self.logger.experiment.add_image(
-                    "train/mel_target",
-                    plot_spectrogram_to_numpy(mel.data.cpu().numpy()),
-                    self.global_step,
-                    dataformats="HWC",
+                    # print(f"{audio_input.shape=}")
+                    audio_input = audio_input.unsqueeze(1)
+                    features = self.feature_extractor.encodec.encoder(audio_input)
+                    # print(f"{features.shape=}")
+                    features = rearrange(features, "b d n -> b n d")
+                    features = self.feature_extractor.encodec.quantizer.vq.layers[0].project_in(features)
+                    # print(f"{features.shape=}")
+                    # (B, C, T) to # (B*T, C)
+                    B, T, C = features.shape
+                    features = features.contiguous().view(B * T, C)
+                    # 40 * 225 = 9000
+                    # print(f"{features.shape=}")
+                features = features.detach().cpu().numpy()
+
+                codebook = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.embed.cpu().numpy()
+                fig_cb = plot_pca_components(features, codebook, 42)
+                self.logger.experiment.add_figure(
+                    f"codebook_latent_space_pca/step_{self.global_step}", fig_cb, global_step=self.global_step
                 )
-                self.logger.experiment.add_image(
-                    "train/mel_pred",
-                    plot_spectrogram_to_numpy(mel_hat.data.cpu().numpy()),
-                    self.global_step,
-                    dataformats="HWC",
-                )
+
+            # if self.global_step % 1000 == 0 and self.global_rank == 0:
+            #     self.logger.experiment.add_audio(
+            #         "train/audio_in", audio_input[0].data.cpu(), self.global_step, self.hparams.sample_rate
+            #     )
+            #     self.logger.experiment.add_audio(
+            #         "train/audio_pred", audio_hat[0].data.cpu(), self.global_step, self.hparams.sample_rate
+            #     )
+            #     with torch.no_grad():
+            #         mel = safe_log(self.melspec_loss.mel_spec(audio_input[0]))
+            #         mel_hat = safe_log(self.melspec_loss.mel_spec(audio_hat[0]))
+            #     self.logger.experiment.add_image(
+            #         "train/mel_target",
+            #         plot_spectrogram_to_numpy(mel.data.cpu().numpy()),
+            #         self.global_step,
+            #         dataformats="HWC",
+            #     )
+            #     self.logger.experiment.add_image(
+            #         "train/mel_pred",
+            #         plot_spectrogram_to_numpy(mel_hat.data.cpu().numpy()),
+            #         self.global_step,
+            #         dataformats="HWC",
+            #     )
+            #     self.logger.experiment.flush()
 
             # self.manual_backward(loss)
             # opt.step()
@@ -307,6 +535,13 @@ class VocosExp(pl.LightningModule):
         mel_loss = self.melspec_loss(audio_hat.unsqueeze(1), audio_input.unsqueeze(1))
         total_loss = mel_loss + (5 - utmos_score) + (5 - pesq_score) + 1000 * commit_loss
 
+        # Mean squared error between prediction and reference (averaged over all samples)
+        # print("audio_input", audio_input.shape)
+        # print("audio_hat", audio_hat.shape)
+        mse = torch.mean((audio_hat - audio_input) ** 2)
+
+        _, codes, _ = self.feature_extractor.infer(audio_input, **kwargs)
+        # print(f"{codes=}")
         return {
             "val_loss": total_loss,
             "mel_loss": mel_loss,
@@ -315,6 +550,9 @@ class VocosExp(pl.LightningModule):
             "periodicity_loss": periodicity_loss,
             "pitch_loss": pitch_loss,
             "f1_score": f1_score,
+            "mse": mse,
+            "codes": codes,
+            "commit_loss": commit_loss,
             "audio_input": audio_input[0],
             "audio_pred": audio_hat[0],
         }
@@ -349,6 +587,22 @@ class VocosExp(pl.LightningModule):
         periodicity_loss = np.array([x["periodicity_loss"] for x in outputs]).mean()
         pitch_loss = np.array([x["pitch_loss"] for x in outputs]).mean()
         f1_score = np.array([x["f1_score"] for x in outputs]).mean()
+        mse = torch.stack([x["mse"] for x in outputs]).mean()
+        commit_loss = torch.stack([x["commit_loss"] for x in outputs]).mean()
+
+        codes = torch.stack([x["codes"] for x in outputs]).detach()
+        codebook_size = self.feature_extractor.encodec.quantizer.vq.layers[0].codebook_size
+        flat_codes = codes.reshape(-1).long()
+        counts = torch.bincount(flat_codes, minlength=codebook_size).float()
+        usage = (counts > 0).float().sum() / codebook_size
+        self.log("val/codebook_usage", usage, sync_dist=True)
+        probs = counts / counts.sum().clamp_min(1.0)
+        probs = probs[probs > 0]
+        entropy = -(probs * torch.log2(probs)).sum()
+        perplexity = torch.exp2(entropy)
+
+        self.log("val/codebook_entropy", entropy, sync_dist=True)
+        self.log("val/codebook_perplexity", perplexity, sync_dist=True)
 
         self.log("val_loss", avg_loss, sync_dist=True)
         self.log("val/mel_loss", mel_loss, sync_dist=True)
@@ -357,6 +611,8 @@ class VocosExp(pl.LightningModule):
         self.log("val/periodicity_loss", periodicity_loss, sync_dist=True)
         self.log("val/pitch_loss", pitch_loss, sync_dist=True)
         self.log("val/f1_score", f1_score, sync_dist=True)
+        self.log("val/mse", mse, sync_dist=True)
+        self.log("val/commit_loss", commit_loss, sync_dist=True)
 
     @property
     def global_step(self):
@@ -415,7 +671,12 @@ class WavTokenizer(VocosExp):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         use_discriminator: bool = True,
+        use_nerd: bool = False,
         train_nerd_only: bool = False,
+        # nerd_initial_learning_rate: float = 5e-4,
+        commit_loss_coef: float = 10.0,
+        respawn_on_nerd_update: bool = False,
+        # nerd_config: NERDConfig = None,
     ):
         super().__init__(
             feature_extractor,
@@ -435,7 +696,12 @@ class WavTokenizer(VocosExp):
             evaluate_periodicty,
             resume,
             use_discriminator,
+            use_nerd,
             train_nerd_only,
+            # nerd_initial_learning_rate,
+            commit_loss_coef,
+            respawn_on_nerd_update,
+            # nerd_config,
         )
         # Override with conditional discriminators
         # VocosExp.__init__(self, feature_extractor, backbone, head, resume_config, resume_model)
@@ -491,7 +757,7 @@ class WavTokenizer(VocosExp):
             # feature_extractor.encodec.quantizer.load_state_dict(state_dict_fa_qa, strict=True)
             feature_extractor.encodec.encoder.load_state_dict(state_dict_fa_en, strict=True)
             feature_extractor.encodec.decoder.load_state_dict(state_dict_fa_de, strict=True)
-            feature_extractor.encodec.quantizer.load_state_dict(state_dict_fa_qa, strict=True)
+            feature_extractor.encodec.quantizer.load_state_dict(state_dict_fa_qa, strict=False)
             backbone.load_state_dict(state_dict_bb, strict=True)
             head.load_state_dict(state_dict_hd, strict=True)
             self.feature_extractor = feature_extractor.to(self.device)

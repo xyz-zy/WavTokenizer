@@ -123,6 +123,9 @@ class EuclideanCodebook(nn.Module):
         epsilon: float = 1e-5,
         threshold_ema_dead_code: int = 2,
         use_nerd: bool = False,
+        replace_with_nerd: bool = False,
+        always_respawn_all: bool = False,
+        nerd_config: NERDConfig = None,
     ):
         super().__init__()
         self.decay = decay
@@ -140,11 +143,41 @@ class EuclideanCodebook(nn.Module):
         self.register_buffer("embed", embed)
         self.register_buffer("embed_avg", embed.clone())
 
-        if use_nerd:
-            self.nerd_config = NERDConfig(hidden=dim)
+        self.use_nerd = use_nerd
+        if self.use_nerd:
+            self.nerd_config = nerd_config #NERDConfig(hidden=dim)
             self.nerd_sampler = NERDSampler(dim, self.nerd_config, device=embed.device)
             self.rd_estimator_config = RDEstimatorConfig()
             self.nerd_rd_estimator = NERDRDEstimator(self.nerd_sampler, self.rd_estimator_config)
+            self.replace_with_nerd = replace_with_nerd
+        self.always_respawn_all = always_respawn_all
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+        nerd_prefix = f"{prefix}nerd_sampler."
+        if not self.use_nerd:
+            unexpected_keys[:] = [key for key in unexpected_keys if not key.startswith(nerd_prefix)]
+            return
+        has_nerd_state = any(key.startswith(nerd_prefix) for key in state_dict.keys())
+        if not has_nerd_state:
+            missing_keys[:] = [key for key in missing_keys if not key.startswith(nerd_prefix)]
 
     @torch.jit.ignore
     def init_embed_(self, data):
@@ -160,21 +193,45 @@ class EuclideanCodebook(nn.Module):
         distrib.broadcast_tensors(self.buffers())
 
     def replace_(self, samples, mask):
-        modified_codebook = torch.where(
-            mask[..., None], sample_vectors(samples, self.codebook_size), self.embed
-        )
-        self.embed.data.copy_(modified_codebook)
+        if self.use_nerd and self.replace_with_nerd:
+            # print("Replacing dead codewords with NERD samples")
+            new_codewords = self.nerd_sampler.sample(self.codebook_size).to(self.embed.device)
+            # print("{new_codewords.shape=}")
+            modified_codebook = torch.where(
+                mask[..., None], new_codewords, self.embed
+            )
+            self.embed.data.copy_(modified_codebook)
+        else:
+            modified_codebook = torch.where(
+                mask[..., None], sample_vectors(samples, self.codebook_size), self.embed
+            )
+            self.embed.data.copy_(modified_codebook)
 
-    def expire_codes_(self, batch_samples):
+    def replace_all_with_nerd(self):
+        if not self.use_nerd:
+            raise RuntimeError("NERD not enabled for this codebook.")
+        # print("Replacing all codewords with NERD samples")
+        new_codewords = self.nerd_sampler.sample(self.codebook_size).to(self.embed.device)
+        self.embed.data.copy_(new_codewords)
+
+    def expire_codes_(self, batch_samples, force_all=False):
+        self.expired_codes = 0
         if self.threshold_ema_dead_code == 0:
             return
 
         expired_codes = self.cluster_size < self.threshold_ema_dead_code
-        if not torch.any(expired_codes):
-            return
+        self.expired_codes = expired_codes.sum().item()
+        if self.always_respawn_all or force_all:
+            # print("Respawning all codewords")
+            self.replace_(
+                batch_samples, torch.ones(self.codebook_size, dtype=torch.bool, device=self.embed.device)
+            )
+        else:
+            if not torch.any(expired_codes):
+                return
 
-        batch_samples = rearrange(batch_samples, "... d -> (...) d")
-        self.replace_(batch_samples, mask=expired_codes)
+            batch_samples = rearrange(batch_samples, "... d -> (...) d")
+            self.replace_(batch_samples, mask=expired_codes)
         distrib.broadcast_tensors(self.buffers())
 
     def preprocess(self, x):
@@ -268,6 +325,9 @@ class VectorQuantization(nn.Module):
         threshold_ema_dead_code: int = 2,
         commitment_weight: float = 1.,
         use_nerd: bool = False,
+        replace_with_nerd: bool = False,
+        always_respawn_all: bool = False,
+        nerd_config: NERDConfig = None,
     ):
         super().__init__()
         _codebook_dim: int = default(codebook_dim, dim)
@@ -282,7 +342,9 @@ class VectorQuantization(nn.Module):
         self._codebook = EuclideanCodebook(dim=_codebook_dim, codebook_size=codebook_size,
                                            kmeans_init=kmeans_init, kmeans_iters=kmeans_iters,
                                            decay=decay, epsilon=epsilon,
-                                           threshold_ema_dead_code=threshold_ema_dead_code, use_nerd=use_nerd)
+                                           threshold_ema_dead_code=threshold_ema_dead_code,
+                                           use_nerd=use_nerd, replace_with_nerd=replace_with_nerd,
+                                           always_respawn_all=always_respawn_all, nerd_config=nerd_config)
         self.codebook_size = codebook_size
 
     @property
