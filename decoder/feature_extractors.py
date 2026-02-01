@@ -11,6 +11,20 @@ from encoder.quantization import ResidualVectorQuantizer
 
 from nerd.nerd import NERDConfig
 
+def _maybe_instantiate_nerd_config(nerd_config):
+    if nerd_config is None or isinstance(nerd_config, NERDConfig):
+        return nerd_config
+    if isinstance(nerd_config, dict):
+        if "class_path" in nerd_config:
+            class_path = nerd_config["class_path"]
+            init_args = nerd_config.get("init_args", {})
+            class_module, class_name = class_path.rsplit(".", 1)
+            module = __import__(class_module, fromlist=[class_name])
+            args_class = getattr(module, class_name)
+            return args_class(**init_args)
+        return NERDConfig(**nerd_config)
+    raise TypeError(f"Unsupported nerd_config type: {type(nerd_config)}")
+
 
 class FeatureExtractor(nn.Module):
     """Base class for feature extractors."""
@@ -69,6 +83,7 @@ class EncodecFeatures(FeatureExtractor):
         nerd_config: NERDConfig = None,
     ):
         super().__init__()
+        nerd_config = _maybe_instantiate_nerd_config(nerd_config)
 
         # breakpoint()
         self.frame_rate = 25  # not use

@@ -6,50 +6,79 @@ python latent_space_viz.py \
   --input_path ./test-clean_filelist.txt \
   --config_path ../WavTokenizer_models/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml \
   --model_path ../WavTokenizer_models/WavTokenizer_small_600_24k_4096.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000 --tsne_with_codebook
+  --out_folder ./result/latent_viz --max_vectors_per_file 10 --max_total_vectors 20000 --tsne_with_codebook
 
 python latent_space_viz.py \
   --input_path ./test_filelist.txt \
   --config_path ../WavTokenizer_models/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml \
   --model_path ../WavTokenizer_models/WavTokenizer_small_600_24k_4096.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000 --tsne_with_codebook
+  --out_folder ./result/latent_viz --max_vectors_per_file 10 --max_total_vectors 20000 --tsne_with_codebook
 
 python latent_space_viz.py \
   --input_path ./test-clean_filelist.txt \
   --config_path ../WavTokenizer_models/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn.yaml \
   --model_path ../WavTokenizer_models/WavTokenizer_small_320_24k_4096.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 100 --max_total_vectors 20000 \
+  --out_folder ./result/latent_viz --max_vectors_per_file 100 --max_total_vectors 20000 \
   --tsne_with_codebook --stop_at_global_cap
 
 python latent_space_viz.py \
   --input_path ./test_filelist.txt \
   --config_path ../WavTokenizer_models/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn.yaml \
   --model_path ../WavTokenizer_models/WavTokenizer_small_320_24k_4096.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 10 --max_total_vectors 20000 --tsne_with_codebook
+  --out_folder ./result/latent_viz --max_vectors_per_file 10 --max_total_vectors 20000 --tsne_with_codebook
 
 python latent_space_viz.py \
   --input_path ./test-clean_filelist.txt \
   --config_path configs/WavTokenizer_small_600_24k_4096_nerdonly.yaml \
   --model_path result/train/WavTokenizer_small_600_24k_4096_nerdonly/lightning_logs/version_0/checkpoints/last.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 100 --max_total_vectors 20000 \
+  --out_folder ./result/latent_viz --max_vectors_per_file 100 --max_total_vectors 20000 \
   --tsne_with_codebook --stop_at_global_cap
 
 python latent_space_viz.py \
   --input_path ./test_filelist.txt \
   --config_path configs/WavTokenizer_small_320_24k_4096_nerdonly.yaml \
   --model_path result/train/WavTokenizer_small_320_24k_4096_nerdonly/lightning_logs/version_3/checkpoints/last.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 100 --max_total_vectors 20000 \
+  --out_folder ./result/latent_viz --max_vectors_per_file 100 --max_total_vectors 20000 \
   --tsne_with_codebook --stop_at_global_cap
 
 python latent_space_viz.py \
   --input_path ./test-clean_filelist.txt \
   --config_path configs/WavTokenizer_small_320_24k_4096_nerdonly.yaml \
   --model_path result/train/WavTokenizer_small_320_24k_4096_nerdonly/lightning_logs/version_0/checkpoints/last.ckpt \
-  --out_folder ./result/tsne --max_vectors_per_file 100 --max_total_vectors 20000 --tsne_with_codebook \
+  --out_folder ./result/latent_viz --max_vectors_per_file 100 --max_total_vectors 20000 --tsne_with_codebook \
+  --stop_at_global_cap
+
+python latent_space_viz.py \
+  --input_path ./test_filelist.txt \
+  --config_path configs/WavTokenizer_small_600_24k_4096_nerdonly_beta0.yaml \
+  --model_path result/train/WavTokenizer_small_600_24k_4096_nerdonly_beta0/lightning_logs/version_0/checkpoints/last.ckpt \
+  --out_folder ./result/latent_viz --max_vectors_per_file 100 --max_total_vectors 20000 --tsne_with_codebook \
+  --stop_at_global_cap
+
+python latent_space_viz.py \
+  --input_path ./test_filelist.txt \
+  --config_path configs/WavTokenizer_small_600_24k_4096_nerdonly_beta20.yaml \
+  --model_path result/train/WavTokenizer_small_600_24k_4096_nerdonly_beta20/lightning_logs/version_0/checkpoints/last.ckpt \
+  --out_folder ./result/latent_viz --max_vectors_per_file 100 --max_total_vectors 20000 --tsne_with_codebook \
+  --stop_at_global_cap
+  
+python latent_space_viz.py \
+  --input_path ./test_filelist.txt \
+  --config_path configs/WavTokenizer_small_600_24k_4096_nerdonly_beta10.yaml \
+  --model_path result/train/WavTokenizer_small_600_24k_4096_nerdonly_beta10/lightning_logs/version_0/checkpoints/last.ckpt \
+  --out_folder ./result/latent_viz --max_vectors_per_file 100 --max_total_vectors 20000 --tsne_with_codebook \
+  --stop_at_global_cap
+
+python latent_space_viz.py \
+  --input_path ./test_filelist.txt \
+  --config_path configs/WavTokenizer_small_600_24k_4096_nerdonly_beta5.yaml \
+  --model_path result/train/WavTokenizer_small_600_24k_4096_nerdonly_beta5/lightning_logs/version_0/checkpoints/last.ckpt \
+  --out_folder ./result/latent_viz --max_vectors_per_file 100 --max_total_vectors 20000 --tsne_with_codebook \
   --stop_at_global_cap
 """
 
 import argparse
+import math
 import os
 import random
 from pathlib import Path
@@ -58,9 +87,11 @@ import numpy as np
 import torch
 import torchaudio
 from decoder.pretrained import WavTokenizer
+from einops import rearrange
+from encoder.quantization.core_vq import EuclideanCodebook
+from matplotlib import pyplot as plt
 from sklearn.manifold import TSNE
 from tqdm import tqdm
-from einops import rearrange
 
 
 def collect_vectors(
@@ -86,7 +117,9 @@ def collect_vectors(
         with torch.inference_mode():
             emb = wavtokenizer.feature_extractor.encodec.encoder(audio)
             emb = rearrange(emb, "b d n -> b n d")
-            emb = wavtokenizer.feature_extractor.encodec.quantizer.vq.layers[0].project_in(emb)
+            emb = wavtokenizer.feature_extractor.encodec.quantizer.vq.layers[
+                0
+            ].project_in(emb)
         # print(f"{emb.shape=}")
         # emb: (B, L, C)
         emb_np = emb.detach().cpu().numpy()
@@ -184,14 +217,19 @@ def run_tsne(
 
 
 def plot_latent_tsne(
-    out_folder, X_tsne, codebook_tsne, codebook_vectors, y, plot_codebook: bool, suffix: str = ""
+    out_folder,
+    X_tsne,
+    codebook_tsne,
+    codebook_vectors,
+    y,
+    plot_codebook: bool,
+    suffix: str = "",
 ):
     suf = f"_{suffix}" if suffix else ""
     if plot_codebook:
         output_file = out_folder / f"latent_tsne{suf}_codebook.png"
     else:
         output_file = out_folder / f"latent_tsne{suf}.png"
-    import matplotlib.pyplot as plt
 
     n_bins = 100
 
@@ -262,7 +300,295 @@ def plot_latent_tsne(
     print("Wrote t-SNE plot to", output_file)
 
 
-def plot_pca_components(out_folder, X, codebook_vectors, random_seed, suffix: str = ""):
+def plot_nerd_metrics(
+    codebook: EuclideanCodebook, latents: torch.Tensor, out_folder: Path
+):
+    """Plot NERD rate-distortion metrics from the given codebook's nerd_sampler."""
+
+    if not hasattr(codebook, "nerd_sampler"):
+        print("Codebook has no nerd_sampler; skipping NERD metrics plot.")
+        return
+    if not hasattr(codebook, "nerd_rd_estimator"):
+        print("Codebook has no nerd_rd_estimator; skipping NERD metrics plot.")
+        return
+
+    nerd_sampler = codebook.nerd_sampler
+    nerd_rd_estimator = codebook.nerd_rd_estimator
+
+    beta_train = (
+        getattr(nerd_sampler, "cfg", None).beta
+        if hasattr(nerd_sampler, "cfg")
+        else None
+    )
+
+    if latents is None or latents.numel() == 0:
+        print("No latents provided; skipping NERD metrics plot.")
+        return
+
+    latents = latents.reshape(-1, latents.shape[-1]).to(torch.float32)
+    n_latents = min(2048, latents.shape[0])
+    if n_latents <= 0:
+        print("No latents available after reshape; skipping NERD metrics plot.")
+        return
+
+    device = codebook.embed.device
+    if latents.device.type == "cpu" and device.type != "cpu":
+        idx = torch.randperm(latents.shape[0])[:n_latents]
+        u = latents[idx].to(device=device, dtype=torch.float32)
+    else:
+        idx = torch.randperm(latents.shape[0], device=latents.device)[:n_latents]
+        u = latents[idx].to(device=device, dtype=torch.float32)
+
+    # Compute empirical VQ distortion and H_bits from assignments
+    with torch.no_grad():
+        embed_ind = codebook.quantize(u).reshape(-1)
+        u_q = codebook.dequantize(embed_ind)
+        codebook_distortion = float(((u - u_q) ** 2).sum(dim=1).mean().detach().cpu())
+        counts = torch.bincount(embed_ind, minlength=codebook.codebook_size).to(
+            torch.float32
+        )
+        p = (counts / counts.sum()).clamp_min(1e-12)
+        codebook_H_bits = float((-p * torch.log2(p)).sum().detach().cpu())
+
+    # Generate plots of rate-distortion curves
+    beta_min, beta_max = 1, 1e3
+    beta_eval_list = torch.logspace(
+        math.log10(beta_min), math.log10(beta_max), steps=32, device=device
+    )
+
+    mu_k, sigma = nerd_rd_estimator._sample_mu_k(device=device)
+    D_list = []
+    R_list = []
+    beta_list = []
+    for beta in beta_eval_list:
+        # Compute rate-distortion metrics on latents
+        with torch.no_grad():
+            D, R, _ = nerd_rd_estimator.estimate_DR(
+                u, beta=float(beta.item()), mu_k=mu_k, sigma=sigma
+            )
+        D_list.append(D)
+        R_list.append(R)
+        beta_list.append(float(beta.item()))
+    if not D_list or not R_list:
+        print("NERD RD estimation produced no points; skipping plot.")
+        return
+
+    fig, ax = plt.subplots(1, 1, figsize=(7, 6))
+    ax.plot(R_list, D_list, marker="o", ms=3, lw=1.2, label="NERD frontier")
+    ax.scatter(
+        [codebook_H_bits],
+        [codebook_distortion],
+        c="tab:red",
+        s=40,
+        label="VQ (H_bits, D_vq)",
+        zorder=3,
+    )
+    ax.annotate(f"beta={beta_list[-1]:.4g}", (R_list[-1], D_list[-1]))
+    ax.annotate(f"beta={beta_list[0]:.4g}", (R_list[0], D_list[0]))
+    ax.set_xlabel("Rate (bits)")
+    ax.set_ylabel("Distortion")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    sigma_val = float(sigma.detach().cpu())
+    title_parts = [
+        f"sigma={sigma_val:.4g}",
+        f"D_vq={codebook_distortion:.4g}",
+        f"H_bits={codebook_H_bits:.4g}",
+    ]
+    if beta_train is not None:
+        title_parts.insert(1, f"beta_train={beta_train:.4g}")
+    ax.set_title("NERD rate-distortion curve\n" + " | ".join(title_parts))
+    ax.legend(loc="best")
+    out_file = out_folder / "nerd_rd_curve.png"
+    fig.savefig(out_file, dpi=200)
+    plt.close(fig)
+    print("Wrote NERD RD plot to", out_file)
+
+
+def _joint_with_marginals(fig, gs, n_bins, X2, cb2=None, dead=None, title=""):
+    sub = gs.subgridspec(
+        2, 2, width_ratios=(4, 1), height_ratios=(1, 4), hspace=0.05, wspace=0.05
+    )
+    ax_histx = fig.add_subplot(sub[0, 0])
+    ax_main = fig.add_subplot(sub[1, 0])
+    ax_histy = fig.add_subplot(sub[1, 1])
+
+    ax_main.scatter(X2[:, 0], X2[:, 1], c="tab:blue", s=6, alpha=0.6, label="latents")
+    if cb2 is not None and dead is None:
+        ax_main.scatter(
+            cb2[:, 0],
+            cb2[:, 1],
+            c="tab:orange",
+            s=24,
+            alpha=0.95,
+            edgecolors="k",
+            label="codebook",
+        )
+    if cb2 is not None and dead is not None:
+        ax_main.scatter(
+            cb2[dead, 0],
+            cb2[dead, 1],
+            c="tab:red",
+            s=26,
+            alpha=0.95,
+            edgecolors="k",
+            label="dead codewords",
+        )
+    ax_main.set_xlabel("PC 1")
+    ax_main.set_ylabel("PC 2")
+    ax_main.legend(loc="best")
+
+    ax_histx.set_title(title)
+
+    ax_histx.hist(X2[:, 0], bins=n_bins, color="tab:blue", alpha=0.6, density=True)
+    if cb2 is not None and dead is None:
+        ax_histx.hist(
+            cb2[:, 0], bins=n_bins, color="tab:orange", alpha=0.6, density=True
+        )
+    if cb2 is not None and dead is not None:
+        ax_histx.hist(
+            cb2[dead, 0], bins=n_bins, color="tab:red", alpha=0.6, density=True
+        )
+    ax_histx.axis("off")
+
+    ax_histy.hist(
+        X2[:, 1],
+        bins=n_bins,
+        orientation="horizontal",
+        color="tab:blue",
+        alpha=0.6,
+        density=True,
+    )
+    if cb2 is not None and dead is None:
+        ax_histy.hist(
+            cb2[:, 1],
+            bins=n_bins,
+            orientation="horizontal",
+            color="tab:orange",
+            alpha=0.6,
+            density=True,
+        )
+    if cb2 is not None and dead is not None:
+        ax_histy.hist(
+            cb2[dead, 1],
+            bins=n_bins,
+            orientation="horizontal",
+            color="tab:red",
+            alpha=0.6,
+            density=True,
+        )
+    ax_histy.axis("off")
+
+
+def _plot_pca_component_pair(
+    out_folder: Path,
+    X_pca_full: np.ndarray,
+    cb_pca_full: np.ndarray,
+    usage_counts,
+    pc_x: int,
+    pc_y: int,
+    filestem: str,
+    codebook_name: str,
+    title_suffix: str,
+):
+    """Plot the given PCA component pair (pc_x, pc_y) from the full PCA projections."""
+
+    X_pca2 = X_pca_full[:, [pc_x, pc_y]]
+    cb_pca2 = None if cb_pca_full is None else cb_pca_full[:, [pc_x, pc_y]]
+
+    np.save(out_folder / f"{filestem}.npy", X_pca2)
+    if cb_pca2 is not None and codebook_name is not None:
+        np.save(out_folder / f"{codebook_name}.npy", cb_pca2)
+
+    n_latents = int(X_pca2.shape[0])
+    n_codebook = int(cb_pca2.shape[0]) if cb_pca2 is not None else 0
+
+    dead_mask = None
+    dead_count = None
+    dead_pct = None
+    usage_arr = None
+    if usage_counts is not None and cb_pca2 is not None:
+        usage_arr = np.asarray(usage_counts)
+        if usage_arr.shape[0] == cb_pca2.shape[0]:
+            dead_mask = usage_arr == 0
+            dead_count = int(dead_mask.sum())
+            dead_pct = 100.0 * dead_count / max(1, usage_arr.shape[0])
+        else:
+            print(
+                f"Usage counts size mismatch: usage_counts={usage_arr.shape[0]} "
+                f"codebook_vectors={cb_pca2.shape[0]}; skipping dead codewords plot."
+            )
+
+    n_bins = 100
+    fig = plt.figure(figsize=(24, 6))
+    outer = fig.add_gridspec(1, 4, wspace=0.25)
+
+    _joint_with_marginals(
+        fig, outer[0], n_bins, X_pca2, cb2=None, dead=None, title="Latents only"
+    )
+    _joint_with_marginals(
+        fig,
+        outer[1],
+        n_bins,
+        X_pca2,
+        cb2=cb_pca2,
+        dead=None,
+        title="Latents + codebook",
+    )
+    if cb_pca2 is not None and dead_mask is not None:
+        alive_mask = ~dead_mask
+        alive_count = int(alive_mask.sum())
+        alive_pct = 100.0 * alive_count / max(1, usage_arr.shape[0])
+        alive_title = f"Alive codewords: {alive_count} ({alive_pct:.2f}%)"
+        _joint_with_marginals(
+            fig,
+            outer[2],
+            n_bins,
+            X_pca2,
+            cb2=cb_pca2,
+            dead=alive_mask,
+            title=alive_title,
+        )
+        dead_title = f"Dead codewords: {dead_count} ({dead_pct:.2f}%)"
+        _joint_with_marginals(
+            fig, outer[3], n_bins, X_pca2, cb2=cb_pca2, dead=dead_mask, title=dead_title
+        )
+    else:
+        _joint_with_marginals(
+            fig,
+            outer[2],
+            n_bins,
+            X_pca2,
+            cb2=None,
+            dead=None,
+            title="Alive codewords: N/A",
+        )
+        _joint_with_marginals(
+            fig,
+            outer[3],
+            n_bins,
+            X_pca2,
+            cb2=None,
+            dead=None,
+            title="Dead codewords: N/A",
+        )
+
+    fig.suptitle(f"PCA ({title_suffix}) | latents={n_latents} | codebook={n_codebook}")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    out_file = out_folder / f"{filestem}.png"
+    fig.savefig(out_file, dpi=200)
+    plt.close(fig)
+    print("Wrote PCA plot to", out_file)
+
+
+def plot_pca_components(
+    out_folder,
+    X,
+    codebook_vectors,
+    random_seed,
+    usage_counts=None,
+    suffix: str = "",
+):
     """Compute top-2 PCA on X and project codebook_vectors (if given). Save plots & arrays."""
     try:
         from sklearn.decomposition import PCA
@@ -280,86 +606,10 @@ def plot_pca_components(out_folder, X, codebook_vectors, random_seed, suffix: st
 
     suf = f"_{suffix}" if suffix else ""
 
-    import matplotlib.pyplot as plt
-    n_bins = 100
-
-    def _mutual_information_1d(x, y, bins):
-        if x.size < 2 or y.size < 2:
-            return None
-        hist2d, _, _ = np.histogram2d(x, y, bins=bins)
-        total = hist2d.sum()
-        if total <= 0:
-            return None
-        pxy = hist2d / total
-        px = pxy.sum(axis=1, keepdims=True)
-        py = pxy.sum(axis=0, keepdims=True)
-        denom = px * py
-        nz = pxy > 0
-        return float(np.sum(pxy[nz] * np.log(pxy[nz] / denom[nz])))
-
-    def _plot_pca_pair(out_folder, X2, cb2, filestem, codebook_name, x_label, y_label, title):
-        np.save(out_folder / f"{filestem}.npy", X2)
-        if cb2 is not None:
-            np.save(out_folder / f"{codebook_name}.npy", cb2)
-
-        fig = plt.figure(figsize=(8, 8))
-        gs = fig.add_gridspec(
-            2, 2, width_ratios=(4, 1), height_ratios=(1, 4), hspace=0.05, wspace=0.05
-        )
-        ax_histx = fig.add_subplot(gs[0, 0])
-        ax_main = fig.add_subplot(gs[1, 0])
-        ax_histy = fig.add_subplot(gs[1, 1])
-
-        ax_main.scatter(X2[:, 0], X2[:, 1], c="tab:blue", s=6, alpha=0.6, label="latents")
-        if cb2 is not None:
-            ax_main.scatter(
-                cb2[:, 0], cb2[:, 1], c="tab:orange", s=24, alpha=0.95, edgecolors="k", label="codebook"
-            )
-
-        ax_main.set_xlabel(x_label)
-        ax_main.set_ylabel(y_label)
-        ax_main.legend()
-
-        ax_histx.hist(X2[:, 0], bins=n_bins, color="tab:blue", alpha=0.6, density=True)
-        if cb2 is not None:
-            ax_histx.hist(cb2[:, 0], bins=n_bins, color="tab:orange", alpha=0.6, density=True)
-        ax_histx.axis("off")
-        title_parts = [title]
-        if cb2 is not None and X2.size and cb2.size:
-            n_pair = min(X2.shape[0], cb2.shape[0])
-            if n_pair > 1:
-                rng = np.random.default_rng(random_seed)
-                x_idx = rng.choice(X2.shape[0], n_pair, replace=False) if X2.shape[0] != n_pair else None
-                cb_idx = rng.choice(cb2.shape[0], n_pair, replace=False) if cb2.shape[0] != n_pair else None
-                X2_pair = X2[x_idx] if x_idx is not None else X2
-                cb2_pair = cb2[cb_idx] if cb_idx is not None else cb2
-                mi_x = _mutual_information_1d(X2_pair[:, 0], cb2_pair[:, 0], n_bins)
-                if mi_x is not None:
-                    title_parts.append(f"\nMI({x_label}, codebook)={mi_x:.4f}")
-                mi_y = _mutual_information_1d(X2_pair[:, 1], cb2_pair[:, 1], n_bins)
-                if mi_y is not None:
-                    title_parts.append(f"\nMI({y_label}, codebook)={mi_y:.4f}")
-        title = " | ".join(title_parts)
-
-        ax_histy.hist(X2[:, 1], bins=n_bins, orientation="horizontal", color="tab:blue", alpha=0.6, density=True)
-        if cb2 is not None:
-            ax_histy.hist(cb2[:, 1], bins=n_bins, orientation="horizontal", color="tab:orange", alpha=0.6, density=True)
-        ax_histy.axis("off")
-
-        plt.suptitle(title)
-        out_file = out_folder / f"{filestem}.png"
-        fig.savefig(out_file, dpi=200)
-        plt.close(fig)
-        print("Wrote PCA plot to", out_file)
-
-    # Prepare PC1-2
-    X_pca2 = X_pca_full[:, :2]
     cb_pca_full = None
-    cb_pca2 = None
     if codebook_vectors is not None:
         try:
             cb_pca_full = pca.transform(codebook_vectors)
-            cb_pca2 = cb_pca_full[:, :2]
         except Exception as e:
             print("Failed to project codebook into PCA space:", e)
 
@@ -370,44 +620,107 @@ def plot_pca_components(out_folder, X, codebook_vectors, random_seed, suffix: st
         filestem2 = f"latent_pca2{suf}"
         codebook_name2 = None
 
-    _plot_pca_pair(
+    _plot_pca_component_pair(
         out_folder,
-        X_pca2,
-        cb_pca2,
+        X_pca_full,
+        cb_pca_full,
+        usage_counts,
+        0,
+        1,
         filestem2,
         codebook_name2,
-        "PC 1",
-        "PC 2",
-        "Top-2 PCA of encoder latents (pre-quant) with codebook overlay",
+        "PC1 vs PC2",
     )
 
     # If we have 4 components, prepare and plot PC3-4
     if n_comp >= 4:
-        X_pca34 = X_pca_full[:, 2:4]
-        cb_pca34 = None
-        if cb_pca_full is not None:
-            try:
-                cb_pca34 = cb_pca_full[:, 2:4]
-            except Exception as e:
-                print("Failed to extract codebook PC3-4:", e)
-
         if codebook_vectors is not None:
             filestem34 = f"latent_pca34_codebook{suf}"
             codebook_name34 = f"codebook_pca34{suf}"
         else:
             filestem34 = f"latent_pca34{suf}"
             codebook_name34 = None
-
-        _plot_pca_pair(
+        _plot_pca_component_pair(
             out_folder,
-            X_pca34,
-            cb_pca34,
+            X_pca_full,
+            cb_pca_full,
+            usage_counts,
+            2,
+            3,
             filestem34,
             codebook_name34,
-            "PC 3",
-            "PC 4",
-            "Top-4 PCA of encoder latents (pre-quant): PC3 vs PC4 with codebook overlay",
+            "PC3 vs PC4",
         )
+
+
+def compute_sampled_codebook_usage(
+    latents: np.ndarray,
+    sampled_codebook: np.ndarray,
+    device: torch.device,
+    batch_size: int = 4096,
+):
+    """Compute usage counts if sampled_codebook were used as the codebook."""
+    if latents is None or sampled_codebook is None:
+        return None
+    if latents.size == 0 or sampled_codebook.size == 0:
+        return None
+
+    latents_t = torch.from_numpy(latents).to(device=device, dtype=torch.float32)
+    codebook_t = torch.from_numpy(sampled_codebook).to(
+        device=device, dtype=torch.float32
+    )
+    ncb = int(codebook_t.shape[0])
+    counts = torch.zeros(ncb, dtype=torch.int64, device="cpu")
+
+    with torch.no_grad():
+        for start in range(0, latents_t.shape[0], batch_size):
+            end = min(start + batch_size, latents_t.shape[0])
+            batch = latents_t[start:end]
+            d2 = torch.cdist(batch, codebook_t, p=2) ** 2
+            idx = torch.argmin(d2, dim=1).cpu()
+            counts += torch.bincount(idx, minlength=ncb)
+
+    return counts.numpy()
+
+
+def plot_codebook_usage(
+    out_folder: Path,
+    codebook_usage_counts: np.ndarray,
+    sampled_codebook_usage_counts: np.ndarray = None,
+    suffix: str = "",
+):
+    """Plot sorted usage counts for current and sampled codebooks on the same histogram."""
+    if codebook_usage_counts is None:
+        print("No codebook usage counts provided; skipping usage plot.")
+        return
+
+    suf = f"_{suffix}" if suffix else ""
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5))
+
+    counts = np.asarray(codebook_usage_counts).astype(np.int64)
+    counts_sorted = np.sort(counts, reversed=True)
+    ax.bar(
+        range(len(counts_sorted)), counts_sorted, alpha=0.75, label="current codebook"
+    )
+
+    if sampled_codebook_usage_counts is not None:
+        sampled = np.asarray(sampled_codebook_usage_counts).astype(np.int64)
+        sampled_sorted = np.sort(sampled, reversed=True)
+        ax.bar(
+            range(len(sampled_sorted)),
+            sampled_sorted,
+            alpha=0.55,
+            label="sampled codebook",
+        )
+
+    ax.set_title("Codebook usage (sorted counts)")
+    ax.set_xlabel("Usage count")
+    ax.set_ylabel("Number of codewords")
+    ax.legend(loc="best")
+    out_file = out_folder / f"codebook_usage_hist{suf}.png"
+    fig.savefig(out_file, dpi=200)
+    plt.close(fig)
+    print("Wrote codebook usage plot to", out_file)
 
 
 def main():
@@ -420,7 +733,7 @@ def main():
         "--model_path", required=True, type=Path, help="WavTokenizer checkpoint"
     )
     parser.add_argument(
-        "--out_folder", default="./result/tsne", type=Path, help="Output folder"
+        "--out_folder", default="./result/latent_viz", type=Path, help="Output folder"
     )
     parser.add_argument("--device", default="cuda:0", help="torch device")
     parser.add_argument("--max_vectors_per_file", type=int, default=200)
@@ -451,9 +764,10 @@ def main():
         args.device if torch.cuda.is_available() or "cpu" in args.device else "cpu"
     )
     foldername = "tsne_with_codebook" if args.tsne_with_codebook else "tsne_no_codebook"
-    out_folder = (
-        args.out_folder / args.model_path.stem / args.input_path.stem / foldername
-    )
+    model_name = args.model_path.stem
+    if model_name == "last":
+        model_name = args.model_path.parent.parent.parent.parent.stem
+    out_folder = args.out_folder / model_name / args.input_path.stem / foldername
     os.makedirs(out_folder, exist_ok=True)
 
     print("Loading model...")
@@ -485,10 +799,41 @@ def main():
     # extract codebook vectors and project to same space
     codebook_vectors, codebook_proc = collect_codebook_vectors(wavtokenizer, pca)
 
+    # compute usage counts for the first codebook (if possible)
+    usage_counts = None
+    try:
+        first_vq_codebook = wavtokenizer.feature_extractor.encodec.quantizer.vq.layers[
+            0
+        ]._codebook
+        if codebook_vectors is not None and first_vq_codebook is not None:
+            ncb = int(first_vq_codebook.codebook_size)
+            if codebook_vectors.shape[0] == ncb:
+                counts = torch.zeros(ncb, dtype=torch.int64)
+                device = first_vq_codebook.embed.device
+                x_tensor = torch.from_numpy(X)
+                with torch.no_grad():
+                    for start in range(0, x_tensor.shape[0], 8192):
+                        end = min(start + 8192, x_tensor.shape[0])
+                        batch = x_tensor[start:end].to(
+                            device=device, dtype=torch.float32
+                        )
+                        idx = first_vq_codebook.quantize(batch).reshape(-1).cpu()
+                        counts += torch.bincount(idx, minlength=ncb)
+                usage_counts = counts.numpy()
+            else:
+                print(
+                    f"Skipping usage counts: codebook_vectors={codebook_vectors.shape[0]} "
+                    f"codebook_size={ncb}."
+                )
+    except Exception as e:
+        print("Failed to compute usage counts for codebook:", e)
+
     # Plot top-2 PCA components for latents and codebook (saves arrays and PNG)
-    plot_pca_components(out_folder, X, codebook_vectors, args.random_seed)
-    plot_pca_components(out_folder, X, None, args.random_seed)
-    
+    plot_pca_components(
+        out_folder, X, codebook_vectors, args.random_seed, usage_counts=usage_counts
+    )
+    plot_pca_components(out_folder, X, None, args.random_seed, usage_counts=None)
+
     X_tsne, codebook_tsne = run_tsne(
         X_proc,
         codebook_proc,
@@ -515,20 +860,23 @@ def main():
     plot_latent_tsne(
         out_folder, X_tsne, codebook_tsne, codebook_vectors, y, plot_codebook=False
     )
-    
+
     # If first vq._codebook has a nerd_sampler, sample additional codebook vectors
     try:
-        first_vq_codebook = (
-            wavtokenizer.feature_extractor.encodec.quantizer.vq.layers[0]._codebook
-        )
+        first_vq_codebook = wavtokenizer.feature_extractor.encodec.quantizer.vq.layers[
+            0
+        ]._codebook
     except Exception:
         first_vq_codebook = None
 
     if first_vq_codebook is not None and hasattr(first_vq_codebook, "nerd_sampler"):
         try:
+            print(first_vq_codebook.nerd_config)
             # determine number of codebook vectors from model's codebook
             ncb = first_vq_codebook.codebook_size
-            assert ncb == codebook_vectors.shape[0], f"Mismatch in codebook vector count {ncb=}, {codebook_vectors.shape[0]=}"
+            assert (
+                ncb == codebook_vectors.shape[0]
+            ), f"Mismatch in codebook vector count {ncb=}, {codebook_vectors.shape[0]=}"
 
             sampled = first_vq_codebook.nerd_sampler.sample(ncb)
             print(f"{first_vq_codebook.nerd_sampler.dec.log_sigma=}")
@@ -540,9 +888,28 @@ def main():
             # save sampled vectors
             np.save(out_folder / f"nerd_sampled_codebook_vectors_{ncb}.npy", sampled_np)
 
-            # PCA plot with sampled codebook (use suffix to avoid overwriting)
-            plot_pca_components(out_folder, X, sampled_np, args.random_seed, suffix=f"nerd{ncb}")
+            # compute usage counts if sampled vectors were the codebook
+            sampled_usage_counts = compute_sampled_codebook_usage(
+                X, sampled_np, device=first_vq_codebook.embed.device
+            )
+            if sampled_usage_counts is not None:
+                np.save(
+                    out_folder / f"nerd_sampled_codebook_usage_{ncb}.npy",
+                    sampled_usage_counts,
+                )
 
+            # PCA plot with sampled codebook (use suffix to avoid overwriting)
+            plot_pca_components(
+                out_folder,
+                X,
+                sampled_np,
+                args.random_seed,
+                usage_counts=sampled_usage_counts,
+                suffix=f"nerd{ncb}",
+            )
+
+            # plot NERD RD metrics based on sampled latents
+            plot_nerd_metrics(first_vq_codebook, torch.from_numpy(X), out_folder)
 
             # prepare proc for t-SNE
             if pca is not None:
@@ -552,13 +919,20 @@ def main():
 
             # run t-SNE including sampled codebook
             X_tsne_s, codebook_tsne_s = run_tsne(
-                X_proc, sampled_proc, args.tsne_perplexity, args.tsne_iter, args.random_seed, use_codebook=True
+                X_proc,
+                sampled_proc,
+                args.tsne_perplexity,
+                args.tsne_iter,
+                args.random_seed,
+                use_codebook=True,
             )
             if X_tsne_s is not None:
                 # save embeddings with suffix
                 np.save(out_folder / f"latent_tsne_nerd{ncb}.npy", X_tsne_s)
                 if codebook_tsne_s is not None:
-                    np.save(out_folder / f"codebook_tsne_nerd{ncb}.npy", codebook_tsne_s)
+                    np.save(
+                        out_folder / f"codebook_tsne_nerd{ncb}.npy", codebook_tsne_s
+                    )
 
                 # plot t-SNE with sampled codebook
                 plot_latent_tsne(
@@ -579,7 +953,14 @@ def main():
                     plot_codebook=False,
                     suffix=f"nerd{ncb}",
                 )
-            
+
+            plot_codebook_usage(
+                out_folder,
+                usage_counts,
+                sampled_codebook_usage_counts=sampled_usage_counts,
+                suffix=f"nerd{ncb}",
+            )
+
         except Exception as e:
             print("Failed to sample or plot nerd_sampler codebook vectors:", e)
 
