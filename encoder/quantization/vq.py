@@ -46,7 +46,7 @@ class ResidualVectorQuantizer(nn.Module):
         decay: float = 0.99,
         kmeans_init: bool = True,
         kmeans_iters: int = 50,
-        threshold_ema_dead_code: int = 2,
+        threshold_ema_dead_code: float = 2.0,
         use_nerd: bool = False,
         replace_with_nerd: bool = False,
         always_respawn_all: bool = False,

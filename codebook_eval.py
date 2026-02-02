@@ -22,6 +22,20 @@ python codebook_eval.py \
     --config_path ../WavTokenizer_models/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn.yaml \
     --model_path ../WavTokenizer_models/WavTokenizer_small_320_24k_4096.ckpt \
     --device cuda:0 --out_folder ./result/eval
+
+python codebook_eval.py \
+    --input_path ./test_filelist.txt \
+    --config_path ./configs/WavTokenizer_small_600_24k_4096.yaml \
+    --model_path ./result/train/WavTokenizer_small_600_24k_4096/lightning_logs/version_1/checkpoints/last.ckpt \
+    --device cuda:0 --out_folder ./result/eval \
+    --model_name WavTokenizer_small_600_24k_4096_repl
+
+python codebook_eval.py \
+    --input_path ./test_filelist.txt \
+    --config_path ./configs/WavTokenizer_small_600_24k_4096_nerdonly_beta10_nobuf_continue_bs40.yaml \
+    --model_path ./result/train/WavTokenizer_small_600_24k_4096_nerdonly_beta10_nobuf_continue_bs40/lightning_logs/version_0/checkpoints/last.ckpt \
+    --device cuda:0 --out_folder ./result/eval \
+    --model_name WavTokenizer_small_600_24k_4096_nerd_beta10_continue_1ep
 """
 
 # --coding:utf-8--
@@ -143,13 +157,20 @@ def main():
     parser.add_argument(
         "--sample_rate", type=int, default=24000, help="Sample rate for saving/decoding"
     )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default=None,
+        help="Model name override",
+    )
     args = parser.parse_args()
 
     device = torch.device(
         args.device if torch.cuda.is_available() or "cpu" in args.device else "cpu"
     )
 
-    out_folder = args.out_folder / args.model_path.stem / args.input_path.stem
+    model_name = args.model_name or args.model_path.stem
+    out_folder = args.out_folder / model_name/ args.input_path.stem
     os.makedirs(out_folder, exist_ok=True)
 
     print("Loading WavTokenizer from", args.config_path, args.model_path)

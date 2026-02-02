@@ -43,6 +43,8 @@ class NERDConfig:
         Maximum number of encoder latents stored in the replay buffer.
     buffer_dtype : torch.dtype
         Storage dtype for the replay buffer to save memory.
+    buffer_device : str
+        Device for replay buffer storage (e.g., "cpu", "cuda").
     """
 
     # generator
@@ -64,8 +66,10 @@ class NERDConfig:
     latents_per_step: int = 1024
 
     # buffer
+    use_buffer: bool = False
     buffer_size: int = 200_000
     buffer_dtype: torch.dtype = torch.float16
+    buffer_device: str = "cpu"
 
     # RD estimation
     rd_Kz: int = 1024
@@ -140,7 +144,7 @@ class NERDDecoder(nn.Module):
 
 class ReplayBuffer:
     """
-    CPU-side circular buffer for encoder latents.
+    Circular buffer for encoder latents.
 
     Parameters
     ----------
@@ -149,62 +153,68 @@ class ReplayBuffer:
     dim : int
         Dimensionality of each stored vector.
     dtype : torch.dtype, optional
-        Storage dtype used on CPU, by default ``torch.float16``.
+        Storage dtype used on the buffer device, by default ``torch.float16``.
+    device : torch.device or str, optional
+        Device used to store the buffer, by default ``cpu``.
 
     Attributes
     ----------
     data : torch.Tensor
-        Backing tensor of shape ``(max_size, dim)`` on CPU.
+        Backing tensor of shape ``(max_size, dim)`` on the buffer device.
     ptr : int
         Write pointer into the circular buffer.
     full : bool
         Whether the buffer has been completely filled at least once.
     """
 
-    def __init__(self, max_size: int, dim: int, dtype=torch.float16):
+    def __init__(self, max_size: int, dim: int, dtype=torch.float16, device="cpu"):
         self.max_size = int(max_size)
         self.dim = int(dim)
         self.dtype = dtype
-        self.data = torch.empty((self.max_size, self.dim), dtype=dtype, device="cpu")
+        self.device = torch.device(device)
+        self.data = torch.empty(
+            (self.max_size, self.dim), dtype=dtype, device=self.device
+        )
         self.ptr = 0
         self.full = False
+        print(f"Initialized ReplayBuffer of size {self.max_size} on {self.device}")
 
     def __len__(self) -> int:
         return self.max_size if self.full else self.ptr
 
     @torch.no_grad()
-    def add(self, x_cpu: torch.Tensor) -> None:
+    def add(self, x: torch.Tensor) -> None:
         """
         Insert a batch of vectors into the buffer, overwriting oldest entries.
 
         Parameters
         ----------
-        x_cpu : torch.Tensor
-            Tensor of shape ``(N, dim)`` on any device; moved to CPU/dtype.
+        x : torch.Tensor
+            Tensor of shape ``(N, dim)`` on any device; moved to buffer device/dtype.
         """
-        x_cpu = x_cpu.to("cpu", non_blocking=True).to(self.dtype)
-        n = int(x_cpu.shape[0])
+        x = x.to(self.device, non_blocking=True).to(self.dtype)
+        n = int(x.shape[0])
         if n <= 0:
             return
 
         if n >= self.max_size:
-            self.data.copy_(x_cpu[-self.max_size :])
+            self.data.copy_(x[-self.max_size :])
             self.ptr = 0
             self.full = True
             return
 
         end = self.ptr + n
         if end <= self.max_size:
-            self.data[self.ptr : end].copy_(x_cpu)
+            self.data[self.ptr : end].copy_(x)
             self.ptr = end
             if self.ptr == self.max_size:
                 self.ptr = 0
                 self.full = True
         else:
             first = self.max_size - self.ptr
-            self.data[self.ptr :].copy_(x_cpu[:first])
+            self.data[self.ptr :].copy_(x[:first])
             rest = n - first
-            self.data[:rest].copy_(x_cpu[first:])
+            self.data[:rest].copy_(x[first:])
             self.ptr = rest
             self.full = True
 
@@ -228,10 +238,9 @@ class ReplayBuffer:
         n = len(self)
         if n <= 0:
             raise RuntimeError("ReplayBuffer is empty")
-        idx = torch.randint(0, n, (batch,), device=device)
-        return self.data[idx.cpu()].to(
-            device=device, dtype=torch.float32, non_blocking=True
-        )
+        idx_device = self.device
+        idx = torch.randint(0, n, (batch,), device=idx_device)
+        return self.data[idx].to(device=device, dtype=torch.float32, non_blocking=True)
 
 
 def nerd_log_g(
@@ -282,9 +291,6 @@ class NERDSampler(nn.Module):
         Dimensionality of the encoder latent space.
     cfg : NERDConfig
         Configuration for the decoder and optimization.
-    device : torch.device
-        Device where the decoder is hosted.
-
     Attributes
     ----------
     dec : NERDDecoder
@@ -293,12 +299,19 @@ class NERDSampler(nn.Module):
         Storage for encoder latents used to fit ``Q_Y``.
     """
 
-    def __init__(self, d: int, cfg: NERDConfig, device: torch.device):
+    def __init__(self, d: int, cfg: NERDConfig):
         super().__init__()
         self.d = d
         self.cfg = cfg
-        self.dec = NERDDecoder(d=d, cfg=cfg)#.to(device)
-        self.buf = ReplayBuffer(max_size=cfg.buffer_size, dim=d, dtype=cfg.buffer_dtype)
+        self.dec = NERDDecoder(d=d, cfg=cfg)
+        self.buf = None
+        if cfg.use_buffer:
+            self.buf = ReplayBuffer(
+                max_size=cfg.buffer_size,
+                dim=d,
+                dtype=cfg.buffer_dtype,
+                device=cfg.buffer_device,
+            )
 
     @torch.no_grad()
     def add_latents(self, u: torch.Tensor) -> None:
@@ -310,7 +323,7 @@ class NERDSampler(nn.Module):
         u : torch.Tensor
             Latents of shape ``(B, d)`` on any device.
         """
-        self.buf.add(u.detach().cpu())
+        self.buf.add(u.detach())
 
     @torch.no_grad()
     def sample(self, n: int) -> torch.Tensor:
@@ -334,7 +347,7 @@ class NERDSampler(nn.Module):
         z = torch.randn(n, self.cfg.dz, device=dec_device)
         return self.dec(z)
 
-    def _train_step(self) -> torch.Tensor:
+    def _train_step(self, u: torch.Tensor = None) -> torch.Tensor:
         """
         Compute loss on buffered latents for a single step.
 
@@ -343,17 +356,14 @@ class NERDSampler(nn.Module):
         torch.Tensor
             Training loss value.
         """
-        # self.dec.train()
         dec_device = next(self.dec.parameters()).device
-        u = self.buf.sample(self.cfg.batch_u, device=dec_device)
+        # print("dec_device:", dec_device)
+        if u is None:
+            u = self.buf.sample(self.cfg.batch_u, device=dec_device)
         z = torch.randn(self.cfg.Kz, self.cfg.dz, device=dec_device)
         mu_k = self.dec(z)
         logg = nerd_log_g(u, mu_k, beta=self.cfg.beta, sigma=self.dec.sigma).mean()
         loss = -logg
-        # opt = torch.optim.Adam(self.dec.parameters(), lr=self.cfg.lr)
-        # opt.zero_grad(set_to_none=True)
-        # loss.backward()
-        # opt.step()
         return loss
 
     def _train_steps(self, steps: int) -> None:

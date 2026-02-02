@@ -167,7 +167,7 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
         codebook_name2,
         "PC 1",
         "PC 2",
-        "Top-2 PCA of encoder latents (pre-quant) with codebook overlay",
+        f"Top-2 PCA of encoder latents (pre-quant) with codebook overlay\nn_latents={len(X_pca2)}, n_codebook={len(cb_pca2)}",
     )
     return fig12
 
@@ -196,6 +196,7 @@ class VocosExp(pl.LightningModule):
         train_nerd_only: bool = False,
         commit_loss_coef: float = 10.0,
         respawn_on_nerd_update: bool = False,
+        init_codebook_counts: bool = False,
     ):
         """
         Args:
@@ -241,6 +242,9 @@ class VocosExp(pl.LightningModule):
 
         self.train_discriminator = False
         self.base_mel_coeff = self.mel_loss_coeff = mel_loss_coeff
+
+        self.init_codebook_counts = init_codebook_counts
+        self.inited_codebook_counts = False
 
         # self.nerd_config = nerd_config
         # """
@@ -314,13 +318,16 @@ class VocosExp(pl.LightningModule):
             return None
 
         if optimizer_idx == 0 and self.hparams.use_nerd:
+            # return None
             with torch.no_grad():
                 # print(f"{audio_input.shape=}")
                 audio_input = audio_input.unsqueeze(1)
                 features = self.feature_extractor.encodec.encoder(audio_input)
                 # print(f"{features.shape=}")
                 features = rearrange(features, "b d n -> b n d")
-                features = self.feature_extractor.encodec.quantizer.vq.layers[0].project_in(features)
+                quantizer = self.feature_extractor.encodec.quantizer.vq.layers[0]
+                # quantizer.eval()
+                features = quantizer.project_in(features)
                 # print(f"{features.shape=}")
                 # (B, C, T) to # (B*T, C)
                 B, T, C = features.shape
@@ -328,17 +335,20 @@ class VocosExp(pl.LightningModule):
                 # 40 * 225 = 9000
                 # print(f"{features.shape=}")
             features = features.detach()
-            nerd_sampler = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.nerd_sampler
-            nerd_sampler.add_latents(features)
-            # print(f"{next(nerd_sampler.dec.parameters()).device=}")
-            nerd_loss = nerd_sampler._train_step()
+            nerd_sampler = quantizer._codebook.nerd_sampler
+            use_buffer = nerd_sampler.cfg.use_buffer
+            if use_buffer:
+                nerd_sampler.add_latents(features)
+                nerd_loss = nerd_sampler._train_step()
+            else:
+                nerd_loss = nerd_sampler._train_step(features)
             self.log("nerd/nerd_loss", nerd_loss, on_step=True, on_epoch=False, prog_bar=True)
             self.log("nerd/sigma", nerd_sampler.dec.sigma, on_step=True, on_epoch=False, prog_bar=True)
 
-            if (batch_idx+1) % 1000 == 0:
+            if (batch_idx) % 100 == 0 and self.global_rank == 0:
                 features = features.cpu().numpy()
-                nerd_codebook = nerd_sampler.sample(1024)
-                fig = plot_pca_components(features, nerd_codebook.cpu().numpy(), 42)
+                nerd_codebook = nerd_sampler.sample(1024).cpu().numpy()
+                fig = plot_pca_components(features, nerd_codebook, 42)
                 
                 self.logger.experiment.add_figure(
                     f"nerd_latent_space/pca_step_{self.global_step}", fig, global_step=self.global_step
@@ -351,22 +361,23 @@ class VocosExp(pl.LightningModule):
                 #     f"codebook_latent_space/pca_step_{self.global_step}", fig_cb, global_step=self.global_step
                 # )
             
-            if self.hparams.respawn_on_nerd_update:
-                # respawn dead codewords
-                codebook = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook
-                codebook.replace_all_with_nerd()
+            # if self.hparams.respawn_on_nerd_update:
+            #     # respawn dead codewords
+            #     codebook = quantizer._codebook
+            #     codebook.replace_all_with_nerd()
             # self.log("nerd/commit_loss", commit_loss, prog_bar=True)
             # total_nerd_loss = nerd_loss + 1000 * commit_loss
-            return nerd_loss if nerd_sampler.buf.full else None #torch.tensor(0.0, device=self.device)
+            return nerd_loss if not use_buffer or nerd_sampler.buf.full else None #torch.tensor(0.0, device=self.device)
 
         # train discriminator
         discriminator_optimizer_idx = 1 if self.hparams.use_nerd else 0
         if optimizer_idx == discriminator_optimizer_idx and self.train_discriminator:
-            # opt, _ = self.optimizers()
-            # opt.zero_grad()
             with torch.no_grad():
+                quantizer = self.feature_extractor.encodec.quantizer.vq.layers[0]
+                codebook = quantizer._codebook
+                codebook.training = False
                 audio_hat, _ = self(audio_input, **kwargs)
-
+                codebook. training=True
 
             loss_dac=self.dacdiscriminator.discriminator_loss(audio_hat.unsqueeze(1),audio_input.unsqueeze(1))
 
@@ -386,15 +397,14 @@ class VocosExp(pl.LightningModule):
             self.log("discriminator/multi_period_loss", loss_mp)
             self.log("discriminator/multi_res_loss", loss_mrd)
             self.log("discriminator/dac", loss_dac)
-            # self.manual_backward(loss)
-            # opt.step()
             return loss
 
         # train generator
         generator_optimizer_idx = 2 if self.hparams.use_nerd else 1
         if optimizer_idx == generator_optimizer_idx:
-            # _, opt = self.optimizers()
-            # opt.zero_grad()
+            quantizer = self.feature_extractor.encodec.quantizer.vq.layers[0]
+            original_codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
+
             audio_hat, commit_loss = self(audio_input, **kwargs)
             # Mean squared error between prediction and reference for logging
             mse = torch.mean((audio_hat - audio_input) ** 2)
@@ -442,17 +452,17 @@ class VocosExp(pl.LightningModule):
             self.log("generator/mel_loss", mel_loss, on_step=True, prog_bar=False)
 
             self.log("quantizer/commit_loss", commit_loss, on_step=True, prog_bar=False)
-            expired_codes = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.expired_codes
+            expired_codes = quantizer._codebook.expired_codes
             self.log("quantizer/expired_codes", expired_codes, on_step=True, prog_bar=True)
 
-            if (batch_idx+1) % 1000 == 0:
+            if (batch_idx) % 1000 == 0 and self.global_rank == 0:
                 with torch.no_grad():
                     # print(f"{audio_input.shape=}")
                     audio_input = audio_input.unsqueeze(1)
                     features = self.feature_extractor.encodec.encoder(audio_input)
                     # print(f"{features.shape=}")
                     features = rearrange(features, "b d n -> b n d")
-                    features = self.feature_extractor.encodec.quantizer.vq.layers[0].project_in(features)
+                    features = quantizer.project_in(features)
                     # print(f"{features.shape=}")
                     # (B, C, T) to # (B*T, C)
                     B, T, C = features.shape
@@ -461,11 +471,36 @@ class VocosExp(pl.LightningModule):
                     # print(f"{features.shape=}")
                 features = features.detach().cpu().numpy()
 
-                codebook = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.embed.cpu().numpy()
+                codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
                 fig_cb = plot_pca_components(features, codebook, 42)
                 self.logger.experiment.add_figure(
                     f"codebook_latent_space_pca/step_{self.global_step}", fig_cb, global_step=self.global_step
                 )
+
+                respawned_codes_mask = quantizer._codebook.expired_codes_mask.detach().cpu().numpy()
+                dead_codes = original_codebook[respawned_codes_mask]
+                alive_codes = original_codebook[~respawned_codes_mask]
+                print(len(dead_codes), "codes respawned")
+                fig_cb_respawned = plot_pca_components(features, dead_codes, 42)
+                self.logger.experiment.add_figure(
+                    f"codebook_latent_space_pca_dead/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
+                )
+                fig_cb_respawned = plot_pca_components(features, alive_codes, 42)
+                self.logger.experiment.add_figure(
+                    f"codebook_latent_space_pca_alive/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
+                )
+
+                respawned_codes = codebook[respawned_codes_mask]
+                print(len(respawned_codes), "codes respawned")
+                fig_cb_respawned = plot_pca_components(features, respawned_codes, 42)
+                self.logger.experiment.add_figure(
+                    f"codebook_latent_space_pca_respawned/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
+                )
+                # fig_cb_respawned = plot_pca_components(features, quantizer._codebook.new_codewords.cpu().numpy(), 42)
+                # # print(len(fig_cb_respawned), "codes respawned")
+                # self.logger.experiment.add_figure(
+                #     f"codebook_latent_space_pca_respawned2/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
+                # )
 
             # if self.global_step % 1000 == 0 and self.global_rank == 0:
             #     self.logger.experiment.add_audio(
@@ -490,9 +525,6 @@ class VocosExp(pl.LightningModule):
             #         dataformats="HWC",
             #     )
             #     self.logger.experiment.flush()
-
-            # self.manual_backward(loss)
-            # opt.step()
             return loss
 
     def on_validation_epoch_start(self):
@@ -676,6 +708,7 @@ class WavTokenizer(VocosExp):
         # nerd_initial_learning_rate: float = 5e-4,
         commit_loss_coef: float = 10.0,
         respawn_on_nerd_update: bool = False,
+        init_codebook_counts: bool = False,
         # nerd_config: NERDConfig = None,
     ):
         super().__init__(
@@ -701,6 +734,7 @@ class WavTokenizer(VocosExp):
             # nerd_initial_learning_rate,
             commit_loss_coef,
             respawn_on_nerd_update,
+            init_codebook_counts,
             # nerd_config,
         )
         # Override with conditional discriminators
@@ -766,6 +800,9 @@ class WavTokenizer(VocosExp):
             self.multiperioddisc.load_state_dict(state_dict_mp, strict=True)
             self.multiresddisc.load_state_dict(state_dict_mr, strict=True)
             self.dac.load_state_dict(state_dict_dac, strict=True)
+        
+        if init_codebook_counts:
+            feature_extractor.encodec.quantizer.vq.layers[0]._codebook.need_init_cluster_size = True
 
     def training_step(self, *args):
         # print('-------------------train--------------------')

@@ -81,6 +81,7 @@ class EncodecFeatures(FeatureExtractor):
         replace_with_nerd: bool = False,
         always_respawn_all: bool = False,
         nerd_config: NERDConfig = None,
+        threshold_ema_dead_code: float = 2.0,
     ):
         super().__init__()
         nerd_config = _maybe_instantiate_nerd_config(nerd_config)
@@ -101,7 +102,8 @@ class EncodecFeatures(FeatureExtractor):
                                             decay=0.99, kmeans_init=True,
                                             use_nerd=use_nerd, replace_with_nerd=replace_with_nerd,
                                             always_respawn_all=always_respawn_all,
-                                            nerd_config=nerd_config)
+                                            nerd_config=nerd_config,
+                                            threshold_ema_dead_code=threshold_ema_dead_code)
 
         # breakpoint()
         if encodec_model == "encodec_24khz":

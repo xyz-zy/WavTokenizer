@@ -146,11 +146,13 @@ class EuclideanCodebook(nn.Module):
         self.use_nerd = use_nerd
         if self.use_nerd:
             self.nerd_config = nerd_config #NERDConfig(hidden=dim)
-            self.nerd_sampler = NERDSampler(dim, self.nerd_config, device=embed.device)
+            self.nerd_sampler = NERDSampler(dim, self.nerd_config)
             self.rd_estimator_config = RDEstimatorConfig()
             self.nerd_rd_estimator = NERDRDEstimator(self.nerd_sampler, self.rd_estimator_config)
             self.replace_with_nerd = replace_with_nerd
         self.always_respawn_all = always_respawn_all
+
+        self.need_init_cluster_size = False
 
     def _load_from_state_dict(
         self,
@@ -171,6 +173,8 @@ class EuclideanCodebook(nn.Module):
             unexpected_keys,
             error_msgs,
         )
+        print(state_dict.keys())
+        print(state_dict[f"{prefix}cluster_size"].numpy())
         nerd_prefix = f"{prefix}nerd_sampler."
         if not self.use_nerd:
             unexpected_keys[:] = [key for key in unexpected_keys if not key.startswith(nerd_prefix)]
@@ -178,6 +182,27 @@ class EuclideanCodebook(nn.Module):
         has_nerd_state = any(key.startswith(nerd_prefix) for key in state_dict.keys())
         if not has_nerd_state:
             missing_keys[:] = [key for key in missing_keys if not key.startswith(nerd_prefix)]
+
+        print(f"EuclideanCodebook inited: {self.inited.item()}, has_nerd_state: {has_nerd_state}")
+        expired_codes = self.cluster_size < self.threshold_ema_dead_code
+        print(f"Post-load expired codes: {expired_codes.sum().item()} / {self.codebook_size}")
+
+    @torch.jit.ignore
+    def init_cluster_size_(self, data):
+        # if self.inited_cluster_size:
+        #     return
+        print(f"Initializing cluster size with k-means, {data.shape=}")
+        embed, cluster_size = kmeans(data, self.codebook_size, self.kmeans_iters)
+        if distrib.is_distributed():
+            distrib.all_reduce(cluster_size)
+        # self.embed.data.copy_(embed)
+        # self.embed_avg.data.copy_(embed.clone())
+        self.cluster_size.data.copy_(cluster_size)
+        print("Initialized cluster size:", list(self.cluster_size.cpu().numpy()))
+        # self.inited.data.copy_(torch.Tensor([True]))
+        # Make sure all buffers across workers are in sync after initialization
+        distrib.broadcast_tensors(self.buffers())
+
 
     @torch.jit.ignore
     def init_embed_(self, data):
@@ -193,14 +218,18 @@ class EuclideanCodebook(nn.Module):
         distrib.broadcast_tensors(self.buffers())
 
     def replace_(self, samples, mask):
+        # print(f"Replacing {mask.sum().item()} dead codewords; {self.use_nerd=}")
         if self.use_nerd and self.replace_with_nerd:
             # print("Replacing dead codewords with NERD samples")
             new_codewords = self.nerd_sampler.sample(self.codebook_size).to(self.embed.device)
+            self.new_codewords = new_codewords
             # print("{new_codewords.shape=}")
             modified_codebook = torch.where(
                 mask[..., None], new_codewords, self.embed
             )
             self.embed.data.copy_(modified_codebook)
+            # Keep EMA state consistent for respawned codes in NERD branch.
+            self.embed_avg.data[mask] = new_codewords[mask] * self.cluster_size.data[mask].unsqueeze(1)
         else:
             modified_codebook = torch.where(
                 mask[..., None], sample_vectors(samples, self.codebook_size), self.embed
@@ -216,11 +245,14 @@ class EuclideanCodebook(nn.Module):
 
     def expire_codes_(self, batch_samples, force_all=False):
         self.expired_codes = 0
+        self.expired_code_indices = torch.tensor([], device=self.embed.device)
         if self.threshold_ema_dead_code == 0:
             return
 
+        # print(list(self.cluster_size.cpu().numpy()))
         expired_codes = self.cluster_size < self.threshold_ema_dead_code
         self.expired_codes = expired_codes.sum().item()
+        self.expired_codes_mask = expired_codes
         if self.always_respawn_all or force_all:
             # print("Respawning all codewords")
             self.replace_(
@@ -281,11 +313,19 @@ class EuclideanCodebook(nn.Module):
         quantize = self.dequantize(embed_ind)
 
         if self.training:
+            if self.need_init_cluster_size:
+                self.init_cluster_size_(x)
+                self.need_init_cluster_size = False
             # We do the expiry of code at that point as buffers are in sync
             # and all the workers will take the same decision.
+            # print("Updating codebook")
             self.expire_codes_(x)
-            ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
+            embed_onehot_sum = embed_onehot.sum(0)
             embed_sum = x.t() @ embed_onehot
+            if distrib.is_distributed():
+                distrib.all_reduce(embed_onehot_sum)
+                distrib.all_reduce(embed_sum)
+            ema_inplace(self.cluster_size, embed_onehot_sum, self.decay)
             ema_inplace(self.embed_avg, embed_sum.t(), self.decay)
             cluster_size = (
                 laplace_smoothing(self.cluster_size, self.codebook_size, self.epsilon)

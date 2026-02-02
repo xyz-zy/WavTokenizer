@@ -11,29 +11,42 @@ import torch
 import math
 from pystoi import stoi
 from tqdm import tqdm
+import glob
+from pathlib import Path
 
 device=torch.device('cuda:0')
 
 # 如果是ljspeech，需要更换路径，更换数据读取逻辑，更换stoi的采样率
 
 def main():
+    # prepath="./result/infer/WavTokenizer_small_600_24k_4096_nerdonly_beta10_nobuf_continue_bs40"
     prepath="./result/infer/WavTokenizer_small_600_24k_4096"
-    rawpath="/home/lxz/orcd/pool/libritts/LibriTTS/test-clean"
+    rawpath="/home/lxz/orcd/pool/libritts/LibriTTS/"
     # rawpath="./Data/LJSpeech-1.1/wavs"
-    preaudio = os.listdir(prepath)
+    # preaudio = os.listdir(prepath)
+    preaudio = sorted(glob.glob(prepath + '/*/*/*/*.wav'))
+    preaudio = [Path(i) for i in preaudio]
+    print(len(preaudio))
+    # exit()
+
     rawaudio = []
 
-    UTMOS=UTMOSScore(device='cuda:0')
-    
     # libritts
-    for i in range(len(preaudio)):
-        id1=preaudio[i].split('_')[0]
-        id2=preaudio[i].split('_')[1]
-        rawaudio.append(rawpath+"/"+id1+"/"+id2+"/"+preaudio[i])
-
+    for i in preaudio:
+        # id1=preaudio[i].split('_')[0]
+        # id2=preaudio[i].split('_')[1]
+        # rawaudio.append(rawpath+"/"+id1+"/"+id2+"/"+preaudio[i])
+        
+        rawaudio_path = Path(rawpath)/ i.relative_to(prepath)
+        assert rawaudio_path.exists(), f"Raw audio path does not exist: {rawaudio_path}"
+        rawaudio.append(rawaudio_path)
+        # assert
+    
     # # ljspeech
     # for i in range(len(preaudio)):
     #     rawaudio.append(rawpath+"/"+preaudio[i])
+
+    UTMOS=UTMOSScore(device='cuda:0')
 
     utmos_sumgt=0.0
     utmos_sumencodec=0.0
@@ -42,12 +55,31 @@ def main():
     stoi_sumpre=[]
     f1score_filt=0
 
-    per_file_metrics = {}
+    processed = 0
+    per_file_metrics_path = os.path.join(prepath, 'metrics_per_file.json')
+    if os.path.exists(per_file_metrics_path):
+        print('Loading existing per-file metrics from', per_file_metrics_path)
+        with open(per_file_metrics_path, 'r') as f:
+            per_file_metrics = json.load(f)
+        utmos_sumgt += sum(v['UTMOS_raw'] for v in per_file_metrics.values())
+        utmos_sumencodec += sum(v['UTMOS_encodec'] for v in per_file_metrics.values())
+        pesq_sumpre += sum(v['PESQ'] for v in per_file_metrics.values() if v['PESQ'] is not None)
+        f1score_sumpre += sum(v['f1_score'] for v in per_file_metrics.values() if v['f1_score'] is not None)
+        f1score_filt += sum(1 for v in per_file_metrics.values() if v['f1_score'] is None)
+        stoi_sumpre.extend(v['STOI'] for v in per_file_metrics.values() if v['STOI'] is not None)
+        processed = len(per_file_metrics)
+    else:
+        per_file_metrics = {}
 
     bar = tqdm(preaudio, desc='Eval', unit='file')
     for i, preaudio_file in enumerate(bar):
+        if str(preaudio_file) in per_file_metrics:
+            continue  # skip already processed files
+
         rawwav,rawwav_sr=torchaudio.load(rawaudio[i])
-        prewav,prewav_sr=torchaudio.load(prepath+"/"+preaudio_file)
+        prewav,prewav_sr=torchaudio.load(preaudio_file)
+
+        # prewav,prewav_sr=torchaudio.load(prepath+"/"+preaudio_file)
         # breakpoint()
         rawwav=rawwav.to(device)
         prewav=prewav.to(device)
@@ -115,7 +147,7 @@ def main():
 
         # store per-file metrics
         fname = preaudio[i]
-        per_file_metrics[fname] = {
+        per_file_metrics[str(fname)] = {
             'UTMOS_raw': float(utmos_raw),
             'UTMOS_encodec': float(utmos_encodec),
             'PESQ': float(pesq_score) if pesq_score is not None else None,
@@ -126,7 +158,7 @@ def main():
         }
 
         # update tqdm postfix with running averages
-        processed = i + 1
+        processed += 1
         utmos_raw_mean = utmos_sumgt / processed if processed > 0 else None
         utmos_encodec_mean = utmos_sumencodec / processed if processed > 0 else None
         pesq_count = sum(1 for v in per_file_metrics.values() if v.get('PESQ') is not None)
@@ -143,24 +175,81 @@ def main():
             'STOI_mean': f"{stoi_mean:.3f}" if stoi_mean is not None else None,
         }
         bar.set_postfix(postfix)
+        json.dump(per_file_metrics, open(per_file_metrics_path, 'w'), indent=2)
 
+    def compute_summary(per_file_metrics):
+        summary = {}
+        n = len(per_file_metrics)
+        utmos_sumgt = sum(v['UTMOS_raw'] for v in per_file_metrics.values())
+        summary['UTMOS_raw_sum'] = float(utmos_sumgt)
+        summary['UTMOS_raw_mean'] = float(utmos_sumgt / n) if n > 0 else None
+
+        utmos_sumencodec = sum(v['UTMOS_encodec'] for v in per_file_metrics.values())
+        summary['UTMOS_encodec_sum'] = float(utmos_sumencodec)
+        summary['UTMOS_encodec_mean'] = float(utmos_sumencodec / n) if n > 0 else None
+
+        # PESQ mean: divide by number of non-None pesq entries
+        pesq_sumpre = sum(v['PESQ'] for v in per_file_metrics.values() if v['PESQ'] is not None)
+        summary['PESQ_sum'] = float(pesq_sumpre)
+        pesq_count = sum(1 for v in per_file_metrics.values() if v.get('PESQ') is not None)
+        summary['PESQ_mean'] = float(pesq_sumpre / pesq_count) if pesq_count > 0 else None
+
+        # F1 mean over valid entries
+        f1score_sumpre = sum(v['f1_score'] for v in per_file_metrics.values() if v['f1_score'] is not None)
+        f1score_filt = sum(1 for v in per_file_metrics.values() if v['f1_score'] is None)
+        valid_f1_count = (n - f1score_filt)
+        summary['F1_sum'] = float(f1score_sumpre)
+        summary['F1_mean'] = float(f1score_sumpre / valid_f1_count) if valid_f1_count > 0 else None
+        summary['F1_nan_count'] = int(f1score_filt)
+
+        stoi_sumpre = [v['STOI'] for v in per_file_metrics.values() if v['STOI'] is not None]
+        summary['STOI_mean'] = float(np.mean(stoi_sumpre)) if len(stoi_sumpre) > 0 else None
+        return summary
     # compute summaries
     n = len(preaudio)
-    summary = {}
-    summary['UTMOS_raw_sum'] = float(utmos_sumgt)
-    summary['UTMOS_raw_mean'] = float(utmos_sumgt / n) if n > 0 else None
-    summary['UTMOS_encodec_sum'] = float(utmos_sumencodec)
-    summary['UTMOS_encodec_mean'] = float(utmos_sumencodec / n) if n > 0 else None
-    summary['PESQ_sum'] = float(pesq_sumpre)
-    # PESQ mean: divide by number of non-None pesq entries
-    pesq_count = sum(1 for v in per_file_metrics.values() if v.get('PESQ') is not None)
-    summary['PESQ_mean'] = float(pesq_sumpre / pesq_count) if pesq_count > 0 else None
-    # F1 mean over valid entries
-    valid_f1_count = (n - f1score_filt)
-    summary['F1_sum'] = float(f1score_sumpre)
-    summary['F1_mean'] = float(f1score_sumpre / valid_f1_count) if valid_f1_count > 0 else None
-    summary['F1_nan_count'] = int(f1score_filt)
-    summary['STOI_mean'] = float(np.mean(stoi_sumpre)) if len(stoi_sumpre) > 0 else None
+
+    summary = compute_summary(per_file_metrics)
+
+    test_clean_metrics = {k: v for k, v in per_file_metrics.items() if 'test-clean' in k}
+    summary_clean = compute_summary(test_clean_metrics)
+    test_other_metrics = {k: v for k, v in per_file_metrics.items() if 'test-other' in k}
+    summary_other = compute_summary(test_other_metrics)
+
+    summary = {
+        'all': summary,
+        'test-clean': summary_clean,
+        'test-other': summary_other,
+    }
+
+    """
+    {
+        "UTMOS_raw_sum": 37453.92534852028,
+        "UTMOS_raw_mean": 3.7615672741307904,
+        "UTMOS_encodec_sum": 32949.08592891693,
+        "UTMOS_encodec_mean": 3.3091378858006357,
+        "PESQ_sum": 16779.97522187233,
+        "PESQ_mean": 1.6852440716955237,
+        "F1_sum": 9011.700878503752,
+        "F1_mean": 0.9059717380621044,
+        "F1_nan_count": 10,
+        "STOI_mean": 0.8489008562108399
+        }
+    """
+    # summary = {}
+    # summary['UTMOS_raw_sum'] = float(utmos_sumgt)
+    # summary['UTMOS_raw_mean'] = float(utmos_sumgt / n) if n > 0 else None
+    # summary['UTMOS_encodec_sum'] = float(utmos_sumencodec)
+    # summary['UTMOS_encodec_mean'] = float(utmos_sumencodec / n) if n > 0 else None
+    # summary['PESQ_sum'] = float(pesq_sumpre)
+    # # PESQ mean: divide by number of non-None pesq entries
+    # pesq_count = sum(1 for v in per_file_metrics.values() if v.get('PESQ') is not None)
+    # summary['PESQ_mean'] = float(pesq_sumpre / pesq_count) if pesq_count > 0 else None
+    # # F1 mean over valid entries
+    # valid_f1_count = (n - f1score_filt)
+    # summary['F1_sum'] = float(f1score_sumpre)
+    # summary['F1_mean'] = float(f1score_sumpre / valid_f1_count) if valid_f1_count > 0 else None
+    # summary['F1_nan_count'] = int(f1score_filt)
+    # summary['STOI_mean'] = float(np.mean(stoi_sumpre)) if len(stoi_sumpre) > 0 else None
 
     # write per-file metrics and summary to json in prepath
     try:
