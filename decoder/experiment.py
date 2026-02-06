@@ -18,6 +18,166 @@ from decoder.models import Backbone
 from decoder.modules import safe_log
 from decoder.pretrained_model import instantiate_class
 
+from einops import rearrange
+
+def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
+    from sklearn.decomposition import PCA
+    import matplotlib.pyplot as plt
+    # print(X.shape)
+
+    n_comp = min(4, X.shape[1])
+    pca = PCA(n_components=n_comp, random_state=random_seed)
+    X_pca_full = pca.fit_transform(X)
+
+    suf = f"_{suffix}" if suffix else ""
+
+    def _plot_pca_pair(
+        X2, cb2, filestem, codebook_name, x_label, y_label, title
+    ):
+        # np.save(out_folder / f"{filestem}.npy", X2)
+        # if cb2 is not None:
+        #     np.save(out_folder / f"{codebook_name}.npy", cb2)
+
+        n_bins = 100
+
+        fig = plt.figure(figsize=(12, 6), constrained_layout=True)
+        gs = fig.add_gridspec(1, 2, wspace=0.2)
+
+        def _panel_axes(spec):
+            sub = spec.subgridspec(
+                2, 2, width_ratios=(4, 1), height_ratios=(1, 4), hspace=0.05, wspace=0.05
+            )
+            ax_histx = fig.add_subplot(sub[0, 0])
+            ax_main = fig.add_subplot(sub[1, 0])
+            ax_histy = fig.add_subplot(sub[1, 1])
+            return ax_main, ax_histx, ax_histy
+
+        def _plot_with_hists(ax_main, ax_histx, ax_histy, add_codebook, panel_title):
+            ax_main.scatter(
+                X2[:, 0], X2[:, 1], c="tab:blue", s=6, alpha=0.6, label="latents"
+            )
+            if add_codebook and cb2 is not None:
+                ax_main.scatter(
+                    cb2[:, 0],
+                    cb2[:, 1],
+                    c="tab:orange",
+                    s=24,
+                    alpha=0.95,
+                    edgecolors="k",
+                    label="codebook",
+                )
+            ax_main.set_xlabel(x_label)
+            ax_main.set_ylabel(y_label)
+            ax_main.set_title(panel_title)
+            if add_codebook and cb2 is not None:
+                ax_main.legend()
+
+            ax_histx.hist(
+                X2[:, 0], bins=n_bins, color="tab:blue", alpha=0.6, density=True
+            )
+            if add_codebook and cb2 is not None:
+                ax_histx.hist(
+                    cb2[:, 0], bins=n_bins, color="tab:orange", alpha=0.6, density=True
+                )
+            ax_histx.axis("off")
+
+            ax_histy.hist(
+                X2[:, 1],
+                bins=n_bins,
+                orientation="horizontal",
+                color="tab:blue",
+                alpha=0.6,
+                density=True,
+            )
+            if add_codebook and cb2 is not None:
+                ax_histy.hist(
+                    cb2[:, 1],
+                    bins=n_bins,
+                    orientation="horizontal",
+                    color="tab:orange",
+                    alpha=0.6,
+                    density=True,
+                )
+            ax_histy.axis("off")
+
+        def _shared_limits():
+            data = X2
+            if cb2 is not None:
+                data = np.concatenate([X2, cb2], axis=0)
+            x_min = float(np.nanmin(data[:, 0]))
+            x_max = float(np.nanmax(data[:, 0]))
+            y_min = float(np.nanmin(data[:, 1]))
+            y_max = float(np.nanmax(data[:, 1]))
+            x_pad = 0.05 * (x_max - x_min) if x_max > x_min else 1.0
+            y_pad = 0.05 * (y_max - y_min) if y_max > y_min else 1.0
+            return (x_min - x_pad, x_max + x_pad), (y_min - y_pad, y_max + y_pad)
+
+        xlim, ylim = _shared_limits()
+
+        ax_main_l, ax_histx_l, ax_histy_l = _panel_axes(gs[0])
+        _plot_with_hists(
+            ax_main_l, ax_histx_l, ax_histy_l, add_codebook=False, panel_title="latents"
+        )
+        ax_main_l.set_xlim(xlim)
+        ax_main_l.set_ylim(ylim)
+
+        ax_main_r, ax_histx_r, ax_histy_r = _panel_axes(gs[1])
+        _plot_with_hists(
+            ax_main_r,
+            ax_histx_r,
+            ax_histy_r,
+            add_codebook=True,
+            panel_title="latents + codebook",
+        )
+        ax_main_r.set_xlim(xlim)
+        ax_main_r.set_ylim(ylim)
+
+        fig.suptitle(title)
+        # out_file = out_folder / f"{filestem}.png"
+        return fig
+        # fig.savefig(out_file, dpi=200)
+        # plt.close(fig)
+        # print("Wrote PCA plot to", out_file)
+
+    # Prepare PC1-2
+    X_pca2 = X_pca_full[:, :2]
+    cb_pca_full = None
+    cb_pca2 = None
+    if codebook_vectors is not None:
+        try:
+            cb_pca_full = pca.transform(codebook_vectors)
+            cb_pca2 = cb_pca_full[:, :2]
+        except Exception as e:
+            print("Failed to project codebook into PCA space:", e)
+
+    if codebook_vectors is not None:
+        filestem2 = f"latent_pca2_codebook{suf}"
+        codebook_name2 = f"codebook_pca2{suf}"
+    else:
+        filestem2 = f"latent_pca2{suf}"
+        codebook_name2 = None
+
+    fig12 =_plot_pca_pair(
+        X_pca2,
+        cb_pca2,
+        filestem2,
+        codebook_name2,
+        "PC 1",
+        "PC 2",
+        f"Top-2 PCA of encoder latents (pre-quant) with codebook overlay\nn_latents={len(X_pca2)}, n_codebook={len(cb_pca2)}",
+    )
+    return fig12
+
+def histogram(data, title, xlabel, ylabel, bins=100):
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    ax.hist(data, bins=bins, color="tab:blue", alpha=0.7)
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    return fig
+
 
 class VocosExp(pl.LightningModule):
     # noinspection PyUnusedLocal
@@ -39,6 +199,7 @@ class VocosExp(pl.LightningModule):
         evaluate_pesq: bool = False,
         evaluate_periodicty: bool = False,
         resume: bool = False,
+        plot_every_n_steps: int = 1000,
     ):
         """
         Args:
@@ -82,6 +243,8 @@ class VocosExp(pl.LightningModule):
 
         self.train_discriminator = False
         self.base_mel_coeff = self.mel_loss_coeff = mel_loss_coeff
+
+        self.plot_every_n_steps = plot_every_n_steps
 
     def configure_optimizers(self):
         disc_params = [
@@ -149,6 +312,10 @@ class VocosExp(pl.LightningModule):
 
         # train generator
         if optimizer_idx == 1:
+            quantizer = self.feature_extractor.encodec.quantizer.vq.layers[0]
+            if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
+                original_codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
+
             audio_hat, commit_loss = self(audio_input, **kwargs)
             if self.train_discriminator:
 
@@ -190,9 +357,14 @@ class VocosExp(pl.LightningModule):
             self.log("generator/total_loss", loss, prog_bar=True)
             self.log("mel_loss_coeff", self.mel_loss_coeff)
             self.log("generator/mel_loss", mel_loss)
-            self.log("commit_loss", commit_loss)
+            self.log("quantizer/commit_loss", commit_loss)
+            expired_codes = quantizer._codebook.expired_codes
+            self.log("quantizer/expired_codes", expired_codes, on_step=True, prog_bar=True)
+            total_assignments = quantizer._codebook.embed_onehot_sum.sum().item()
+            self.log("quantizer/total_assignments_per_batch", total_assignments, on_step=True)
+            self.log("quantizer/cluster_size_sum", quantizer._codebook.cluster_size.sum().item(), on_step=True)
 
-            if self.global_step % 1000 == 0 and self.global_rank == 0:
+            if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
                 self.logger.experiment.add_audio(
                     "train/audio_in", audio_input[0].data.cpu(), self.global_step, self.hparams.sample_rate
                 )
@@ -214,6 +386,65 @@ class VocosExp(pl.LightningModule):
                     self.global_step,
                     dataformats="HWC",
                 )
+
+                with torch.no_grad():
+                    # print(f"{audio_input.shape=}")
+                    audio_input = audio_input.unsqueeze(1)
+                    features = self.feature_extractor.encodec.encoder(audio_input)
+                    # print(f"{features.shape=}")
+                    features = rearrange(features, "b d n -> b n d")
+                    features = quantizer.project_in(features)
+                    # print(f"{features.shape=}")
+                    # (B, C, T) to # (B*T, C)
+                    B, T, C = features.shape
+                    features = features.contiguous().view(B * T, C)
+                    # 40 * 225 = 9000
+                    # print(f"{features.shape=}")
+                features = features.detach().cpu().numpy()
+
+                codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
+                fig_cb = plot_pca_components(features, codebook, 42)
+                self.logger.experiment.add_figure(
+                    f"codebook_latent_space_pca/step_{self.global_step}", fig_cb, global_step=self.global_step
+                )
+
+                respawned_codes_mask = quantizer._codebook.expired_codes_mask.detach().cpu().numpy()
+                dead_codes = original_codebook[respawned_codes_mask]
+                alive_codes = original_codebook[~respawned_codes_mask]
+                # print(len(dead_codes), "codes respawned")
+                fig_cb_respawned = plot_pca_components(features, dead_codes, 42)
+                self.logger.experiment.add_figure(
+                    f"codebook_latent_space_pca_dead/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
+                )
+                fig_cb_respawned = plot_pca_components(features, alive_codes, 42)
+                self.logger.experiment.add_figure(
+                    f"codebook_latent_space_pca_alive/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
+                )
+
+                respawned_codes = codebook[respawned_codes_mask]
+                # print(len(respawned_codes), "codes respawned")
+                fig_cb_respawned = plot_pca_components(features, respawned_codes, 42)
+                self.logger.experiment.add_figure(
+                    f"codebook_latent_space_pca_respawned/step_{self.global_step}",
+                    fig_cb_respawned,
+                    global_step=self.global_step,
+                )
+
+                bins = np.arange(0, 10, 0.2)
+                # print(quantizer._codebook.cluster_size.cpu().numpy())
+                fig = histogram(
+                    data=quantizer._codebook.cluster_size.cpu().numpy(),
+                    title="EMA Cluster Size Histogram",
+                    xlabel="Cluster Size",
+                    ylabel="Frequency",
+                    bins=bins,
+                )
+                self.logger.experiment.add_figure(
+                    f"codebook_cluster_size_histogram/step_{self.global_step}",
+                    fig,
+                    global_step=self.global_step,
+                )
+
 
             return loss
 
@@ -361,6 +592,7 @@ class WavTokenizer(VocosExp):
         evaluate_pesq: bool = False,
         evaluate_periodicty: bool = False,
         resume: bool = False,
+        plot_every_n_steps: int = 1000,
     ):
         super().__init__(
             feature_extractor,
@@ -378,7 +610,8 @@ class WavTokenizer(VocosExp):
             evaluate_utmos,
             evaluate_pesq,
             evaluate_periodicty,
-            resume
+            resume,
+            plot_every_n_steps,
         )
         # Override with conditional discriminators
         # VocosExp.__init__(self, feature_extractor, backbone, head, resume_config, resume_model)

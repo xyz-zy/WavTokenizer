@@ -136,6 +136,7 @@ class EuclideanCodebook(nn.Module):
         self.register_buffer("cluster_size", torch.zeros(codebook_size))
         self.register_buffer("embed", embed)
         self.register_buffer("embed_avg", embed.clone())
+        self.expired_codes = -1
 
     @torch.jit.ignore
     def init_embed_(self, data):
@@ -163,7 +164,8 @@ class EuclideanCodebook(nn.Module):
         expired_codes = self.cluster_size < self.threshold_ema_dead_code
         if not torch.any(expired_codes):
             return
-
+        self.expired_codes = expired_codes.sum().item()
+        self.expired_codes_mask = expired_codes
         batch_samples = rearrange(batch_samples, "... d -> (...) d")
         self.replace_(batch_samples, mask=expired_codes)
         distrib.broadcast_tensors(self.buffers())
@@ -218,8 +220,14 @@ class EuclideanCodebook(nn.Module):
             # We do the expiry of code at that point as buffers are in sync
             # and all the workers will take the same decision.
             self.expire_codes_(x)
+            self.embed_onehot_sum = embed_onehot.sum(0)
             ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
             embed_sum = x.t() @ embed_onehot
+            # print(embed_sum.cpu().detach().numpy().tolist())
+            # print(embed_sum.shape)
+            # embed_sum_summed = embed_sum.abs().sum(0)
+            # print(embed_sum_summed.shape)
+            # print(embed_sum_summed)
             ema_inplace(self.embed_avg, embed_sum.t(), self.decay)
             cluster_size = (
                 laplace_smoothing(self.cluster_size, self.codebook_size, self.epsilon)
