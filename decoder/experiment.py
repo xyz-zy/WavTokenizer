@@ -8,6 +8,7 @@ import torchaudio
 import transformers
 import yaml
 
+from encoder import distrib
 from decoder.discriminator_dac import DACDiscriminator
 
 from decoder.discriminators import MultiPeriodDiscriminator, MultiResolutionDiscriminator
@@ -400,6 +401,7 @@ class VocosExp(pl.LightningModule):
             self.log("quantizer/cluster_size_sum", quantizer._codebook.cluster_size.sum().item(), on_step=True)
             threshold = quantizer._codebook.threshold_ema_dead_code
             self.log("quantizer/threshold_ema_dead_code", threshold, on_step=True)
+            self.log("quantizer/world_size", distrib.world_size(), on_step=True)
 
             codebook_norms = torch.norm(quantizer._codebook.embed.data, p=2, dim=-1)
             self.log("quantizer/codebook_l2_norm_mean", codebook_norms.mean().item(), on_step=True)
