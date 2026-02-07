@@ -219,6 +219,7 @@ class EuclideanCodebook(nn.Module):
         self.kmeans_iters = kmeans_iters
         self.epsilon = epsilon
         self.threshold_ema_dead_code = threshold_ema_dead_code
+        self.reset_cluster_size = threshold_ema_dead_code
 
         self.register_buffer("inited", torch.Tensor([not kmeans_init]))
         self.register_buffer("cluster_size", torch.zeros(codebook_size))
@@ -253,6 +254,14 @@ class EuclideanCodebook(nn.Module):
             mask[..., None], sampled, self.embed
         )
         self.embed.data.copy_(modified_codebook)
+
+        reset_cluster_size = torch.full_like(self.cluster_size, self.reset_cluster_size)
+        modified_cluster_size = torch.where(mask, reset_cluster_size, self.cluster_size)
+        self.cluster_size.data.copy_(modified_cluster_size)
+
+        reset_embed_avg = sampled * self.reset_cluster_size
+        modified_embed_avg = torch.where(mask[..., None], reset_embed_avg, self.embed_avg)
+        self.embed_avg.data.copy_(modified_embed_avg)
 
     def expire_codes_(self, batch_samples):
         if self.threshold_ema_dead_code == 0:
@@ -334,6 +343,7 @@ class EuclideanCodebook(nn.Module):
                 laplace_smoothing(self.cluster_size, self.codebook_size, self.epsilon)
                 * self.cluster_size.sum()
             )
+            # distrib.broadcast_tensors(self.buffers())
             embed_normalized = self.embed_avg / cluster_size.unsqueeze(1)
             self.embed.data.copy_(embed_normalized)
 
