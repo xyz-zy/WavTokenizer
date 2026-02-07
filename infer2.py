@@ -1,24 +1,29 @@
-
 """
 Docstring for WavTokenizer.infer
 
 This script performs inference using a pretrained WavTokenizer model.
 """
-# --coding:utf-8--
-import os
 
-from encoder.utils import convert_audio
-import torchaudio
-import torch
-from decoder.pretrained import WavTokenizer
-from tqdm import tqdm
+# --coding:utf-8--
+import argparse
+import json
+import logging
+import os
+import time
 from pathlib import Path
 
-import time
+import torch
+import torchaudio
+from tqdm import tqdm
 
-import logging
-import json
-import argparse
+# isort: off
+
+# Local imports
+from decoder.pretrained import WavTokenizer
+from encoder.utils import convert_audio
+
+# isort: on
+
 """
 python infer2.py \
     --config_path ./configs/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn_2gpu.yaml \
@@ -27,34 +32,42 @@ python infer2.py \
 """
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--config_path', type=str, required=False, default=None, help='Path to model config')
-parser.add_argument('--model_path', type=str, required=True, help='Path to model checkpoint')
-parser.add_argument('--out_name', type=str, default="WavTokenizer_small_600_24k_4096", help='Subfolder name for output')
+parser.add_argument(
+    "--config_path", type=str, required=False, default=None, help="Path to model config"
+)
+parser.add_argument(
+    "--model_path", type=str, required=True, help="Path to model checkpoint"
+)
+parser.add_argument(
+    "--out_name",
+    type=str,
+    default="WavTokenizer_small_600_24k_4096",
+    help="Subfolder name for output",
+)
 args = parser.parse_args()
 
 model_path = Path(args.model_path)
 
-config_path = Path(args.config_path) if args.config_path else model_path.parent.parent / 'config.yaml'
+config_path = (
+    Path(args.config_path)
+    if args.config_path
+    else model_path.parent.parent / "config.yaml"
+)
 if not config_path.exists():
     raise FileNotFoundError(f"Config file not found at {config_path}")
 config_path = str(config_path)
 
 ll = args.out_name
 
-device1=torch.device('cuda:0')
-# device2=torch.device('cpu')
+device1 = torch.device("cuda:0")
 
 input_path = "/orcd/scratch/orcd/009/lxz/WavTokenizer/test-clean_filelist.txt"
-out_folder = './result/infer'
-# os.system("rm -r %s"%(out_folder))
-# os.system("mkdir -p %s"%(out_folder))
-# ll="libritts_testclean500_large"
-# ll="WavTokenizer_small_600_24k_4096_repl"
+out_folder = Path("./result/infer")
 
-tmptmp=out_folder+"/"+ll
+tmptmp = out_folder / ll
 
-os.system("rm -r %s"%(tmptmp))
-os.system("mkdir -p %s"%(tmptmp))
+os.system("rm -r %s" % (tmptmp))
+os.system("mkdir -p %s" % (tmptmp))
 
 
 def align_mse(orig, recon):
@@ -67,60 +80,44 @@ def align_mse(orig, recon):
     if L == 0:
         return None
     diff = orig[:L] - recon[:L]
-    return float(torch.mean(diff ** 2).item())
+    return float(torch.mean(diff**2).item())
 
-# 自己数据模型加载
-# config_path = "../WavTokenizer_models/wavtokenizer_smalldata_frame40_3s_nq1_code4096_dim512_kmeans200_attn.yaml"
-# model_path = "../WavTokenizer_models/WavTokenizer_small_600_24k_4096.ckpt"
 
-# config_path = "configs/WavTokenizer_small_600_24k_4096_nerdonly_beta10_nobuf_continue_bs40.yaml"
-# model_path = "result/train/WavTokenizer_small_600_24k_4096_nerdonly_beta10_nobuf_continue_bs40/lightning_logs/version_0/checkpoints/last.ckpt"
-# config_path = "../WavTokenizer_models/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn.yaml"
-# model_path = "../WavTokenizer_models/WavTokenizer_small_320_24k_4096.ckpt"
 wavtokenizer = WavTokenizer.from_pretrained0802(config_path, model_path)
 wavtokenizer = wavtokenizer.to(device1)
-# wavtokenizer = wavtokenizer.to(device2)
 
-with open(input_path,'r') as fin:
-    x=fin.readlines()
+with open(input_path, "r") as fin:
+    x = fin.readlines()
 
 x = [i.strip() for i in x]
 
-# 完成一些加速处理
-
-# features_all=[]
-
-model_out_folder = Path(out_folder + '/' + ll)
+model_out_folder = out_folder / ll
 for i in tqdm(range(len(x))):
     input_path = Path(x[i])
-    file_out_folder = model_out_folder / input_path.parent.relative_to("/orcd/pool/008/lxz/libritts/LibriTTS")
+    file_out_folder = model_out_folder / input_path.parent.relative_to(
+        "/orcd/pool/008/lxz/libritts/LibriTTS"
+    )
     file_out_folder.mkdir(parents=True, exist_ok=True)
     audio_path = file_out_folder / input_path.name
-    # print(input_path)
-    # print(audio_path)
+
     if os.path.exists(audio_path):
-        # print("exists:",audio_path)
         continue
     wav, sr = torchaudio.load(input_path)
-    # print("***:",x[i])
-    # wav = convert_audio(wav, sr, 24000, 1)                             # (1,131040)
+
     bandwidth_id = torch.tensor([0])
-    wav=wav.to(device1)
-    # print(i)
+    wav = wav.to(device1)
 
-    features,discrete_code= wavtokenizer.encode_infer(wav, bandwidth_id=bandwidth_id)
-    # features_all.append(features)
+    features, discrete_code = wavtokenizer.encode_infer(wav, bandwidth_id=bandwidth_id)
 
-# wavtokenizer = wavtokenizer.to(device2)
-
-# for i in tqdm(range(len(x))):
-    # print(x[i])
     bandwidth_id = torch.tensor([0])
     bandwidth_id = bandwidth_id.to(device1)
 
-    audio_out = wavtokenizer.decode(features, bandwidth_id=bandwidth_id)   
-    # print(i,time.time()) 
-    # breakpoint()                        # (1, 131200)
-    # os.makedirs(out_folder + '/' + ll, exist_ok=True)
-    # print(audio_path)
-    torchaudio.save(audio_path, audio_out.cpu(), sample_rate=24000, encoding='PCM_S', bits_per_sample=16)
+    audio_out = wavtokenizer.decode(features, bandwidth_id=bandwidth_id)
+
+    torchaudio.save(
+        audio_path,
+        audio_out.cpu(),
+        sample_rate=24000,
+        encoding="PCM_S",
+        bits_per_sample=16,
+    )
