@@ -337,11 +337,11 @@ class EuclideanCodebook(nn.Module):
         )
         self.embed.data.copy_(modified_codebook)
 
-        reset_cluster_size = torch.full_like(self.cluster_size, self.reset_cluster_size)
+        reset_cluster_size = torch.full_like(self.cluster_size, self.reset_cluster_size * distrib.world_size())
         modified_cluster_size = torch.where(mask, reset_cluster_size, self.cluster_size)
         self.cluster_size.data.copy_(modified_cluster_size)
 
-        reset_embed_avg = sampled * self.reset_cluster_size
+        reset_embed_avg = sampled * self.reset_cluster_size * distrib.world_size()
         modified_embed_avg = torch.where(mask[..., None], reset_embed_avg, self.embed_avg)
         self.embed_avg.data.copy_(modified_embed_avg)
 
