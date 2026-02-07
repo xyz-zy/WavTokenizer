@@ -2,3 +2,4 @@
 result/
 *.pt
 *.ckpt
+env/
