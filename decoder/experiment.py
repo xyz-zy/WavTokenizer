@@ -74,17 +74,28 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
                 ax_main.legend()
 
             ax_histx.hist(
-                X2[:, 0], bins=n_bins, color="tab:blue", alpha=0.6, density=True
+                X2[:, 0],
+                bins=n_bins,
+                range=xlim,
+                color="tab:blue",
+                alpha=0.6,
+                density=True,
             )
             if add_codebook and cb2 is not None:
                 ax_histx.hist(
-                    cb2[:, 0], bins=n_bins, color="tab:orange", alpha=0.6, density=True
+                    cb2[:, 0],
+                    bins=n_bins,
+                    range=xlim,
+                    color="tab:orange",
+                    alpha=0.6,
+                    density=True,
                 )
             ax_histx.axis("off")
 
             ax_histy.hist(
                 X2[:, 1],
                 bins=n_bins,
+                range=ylim,
                 orientation="horizontal",
                 color="tab:blue",
                 alpha=0.6,
@@ -94,6 +105,7 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
                 ax_histy.hist(
                     cb2[:, 1],
                     bins=n_bins,
+                    range=ylim,
                     orientation="horizontal",
                     color="tab:orange",
                     alpha=0.6,
