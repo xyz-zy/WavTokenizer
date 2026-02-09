@@ -248,6 +248,7 @@ class VocosExp(pl.LightningModule):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         plot_every_n_steps: int = 1000,
+        commit_loss_coeff: float = 1000,
     ):
         """
         Args:
@@ -264,6 +265,7 @@ class VocosExp(pl.LightningModule):
             evaluate_utmos (bool, optional): If True, UTMOS scores are computed for each validation run.
             evaluate_pesq (bool, optional): If True, PESQ scores are computed for each validation run.
             evaluate_periodicty (bool, optional): If True, periodicity scores are computed for each validation run.
+            commit_loss_coeff (float, optional): Coefficient for commitment loss. Default is 1000.
         """
         super().__init__()
         self.save_hyperparameters(ignore=["feature_extractor", "backbone", "head"])
@@ -291,8 +293,11 @@ class VocosExp(pl.LightningModule):
 
         self.train_discriminator = False
         self.base_mel_coeff = self.mel_loss_coeff = mel_loss_coeff
+        self.commit_loss_coeff = commit_loss_coeff
 
         self.plot_every_n_steps = plot_every_n_steps
+
+        self.last_step_respawned_mask = None
 
     def configure_optimizers(self):
         disc_params = [
@@ -397,7 +402,7 @@ class VocosExp(pl.LightningModule):
                 + loss_fm_mp
                 + self.hparams.mrd_loss_coeff * loss_fm_mrd
                 + self.mel_loss_coeff * mel_loss
-                + 1000 * commit_loss
+                + self.commit_loss_coeff * commit_loss
                 + loss_dac_1
                 + loss_dac_2
             )
@@ -414,6 +419,7 @@ class VocosExp(pl.LightningModule):
             threshold = quantizer._codebook.threshold_ema_dead_code
             self.log("quantizer/threshold_ema_dead_code", threshold, on_step=True)
             self.log("quantizer/world_size", distrib.world_size(), on_step=True)
+            self.log("quantizer/decay", quantizer._codebook.decay, on_step=True)
 
             codebook_norms = torch.norm(quantizer._codebook.embed.data, p=2, dim=-1)
             self.log("quantizer/codebook_l2_norm_mean", codebook_norms.mean().item(), on_step=True)
@@ -512,27 +518,63 @@ class VocosExp(pl.LightningModule):
                     global_step=self.global_step,
                 )
 
-                codebook_vecs = quantizer._codebook.embed
-                zero_thresh = 1e-6
-                zero_mask = codebook_vecs.norm(dim=1) < zero_thresh
-                zero_count = int(zero_mask.sum().item())
-                self.log(
-                    "codebook/zero_vectors",
-                    zero_count,
-                    on_step=True,
+                unassigned_codes_mask = quantizer._codebook.embed_onehot_sum.cpu().numpy() == 0
+                unassigned_codes = codebook[unassigned_codes_mask]
+                fig_cb_unassigned = plot_pca_components(features, unassigned_codes, 42)
+                self.logger.experiment.add_figure(
+                    f"codebook_latent_space_pca_unassigned/step_{self.global_step}",
+                    fig_cb_unassigned,
+                    global_step=self.global_step,
                 )
-                prev_zero_mask = getattr(quantizer._codebook, "_prev_zero_mask", None)
-                assigned_mask = quantizer._codebook.embed_onehot_sum > 0
-                if prev_zero_mask is not None:
-                    prev_zero_assigned = int((prev_zero_mask & assigned_mask).sum().item())
-                else:
-                    prev_zero_assigned = 0
-                self.log(
-                    "codebook/prev_zero_assigned",
-                    prev_zero_assigned,
-                    on_step=True,
+
+                unassigned_codes_cluster_sizes = quantizer._codebook.cluster_size[unassigned_codes_mask].cpu().numpy()
+                # print("Cluster sizes of unassigned codes:", unassigned_codes_cluster_sizes)
+                fig = histogram(
+                    data=unassigned_codes_cluster_sizes,
+                    title="Cluster Size of Unassigned Codes",
+                    xlabel="Cluster Size",
+                    ylabel="Frequency",
+                    bins=bins,
                 )
-                quantizer._codebook._prev_zero_mask = zero_mask.detach()
+                self.logger.experiment.add_figure(
+                    f"codebook_cluster_size_histogram_unassigned/step_{self.global_step}",
+                    fig,
+                    global_step=self.global_step,
+                )
+
+
+                if self.last_step_respawned_mask is not None:
+                    fig_cb_respawned = plot_pca_components(features, codebook[self.last_step_respawned_mask], 42)
+                    self.logger.experiment.add_figure(
+                        f"codebook_latent_space_pca_last_step_respawned/step_{self.global_step}",
+                        fig_cb_respawned,
+                        global_step=self.global_step,
+                    )
+
+                    last_step_respawned_cluster_sizes = quantizer._codebook.cluster_size[self.last_step_respawned_mask].cpu().numpy()
+                    # print("Cluster sizes of codes respawned in the last step:", last_step_respawned_cluster_sizes)
+                    fig = histogram(
+                        data=last_step_respawned_cluster_sizes,
+                        title="Cluster Size of Codes Respawned in Last Step",
+                        xlabel="Cluster Size",
+                        ylabel="Frequency",
+                        bins=bins,
+                    )
+                    self.logger.experiment.add_figure(
+                        f"codebook_cluster_size_histogram_last_step_respawned/step_{self.global_step}",
+                        fig,
+                        global_step=self.global_step,
+                    )
+                    dead_again = quantizer._codebook.expired_codes_mask.cpu().numpy() & self.last_step_respawned_mask
+                    fig_cb_dead_again = plot_pca_components(features, codebook[dead_again], 42)
+                    self.logger.experiment.add_figure(
+                        f"codebook_latent_space_pca_dead_again/step_{self.global_step}",
+                        fig_cb_dead_again,
+                        global_step=self.global_step,
+                    )
+
+                self.last_step_respawned_mask = respawned_codes_mask
+
 
             return loss
 
@@ -681,6 +723,7 @@ class WavTokenizer(VocosExp):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         plot_every_n_steps: int = 1000,
+        commit_loss_coeff: float = 1000,
     ):
         super().__init__(
             feature_extractor,
@@ -700,6 +743,7 @@ class WavTokenizer(VocosExp):
             evaluate_periodicty,
             resume,
             plot_every_n_steps,
+            commit_loss_coeff=commit_loss_coeff,
         )
         # Override with conditional discriminators
         # VocosExp.__init__(self, feature_extractor, backbone, head, resume_config, resume_model)
