@@ -1,12 +1,3 @@
-"""
-python codebook_eval.py \
-    --input_path ./test_filelist.txt \
-    --config_path ./configs/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn_2gpu.yaml \
-    --model_path ./result/train/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn_2gpu/lightning_logs/version_0/checkpoints/wavtokenizer_checkpoint_epoch=28_step=233160_val_loss=4.6529.ckpt \
-    --device cuda:0 --out_folder ./result/eval \
-    --out_name WavTokenizer_small_600_24k_4096_repl_2gpu_v0_28ep
-"""
-
 # --coding:utf-8--
 """
 Evaluate codebook usage over a dataset using a pretrained WavTokenizer.
@@ -244,8 +235,10 @@ def main():
 
     avg_unique_per_utt = float(np.mean(per_file_unique)) if per_file_unique else 0.0
     avg_seq_len = float(np.mean(per_file_len)) if per_file_len else 0.0
-    avg_recon_mse = float(np.mean(recon_mses)) if recon_mses else None
-    avg_quant_loss = float(np.mean(quant_losses)) if quant_losses else None
+    recon_mse_mean = float(np.mean(recon_mses)) if recon_mses else None
+    recon_mse_std = float(np.std(recon_mses)) if recon_mses else None
+    quant_loss_mean = float(np.mean(quant_losses)) if quant_losses else None
+    quant_loss_std = float(np.std(quant_losses)) if quant_losses else None
 
     report = {
         "total_files": len(files),
@@ -258,8 +251,10 @@ def main():
         "perplexity": perplexity,
         "avg_unique_per_utterance": avg_unique_per_utt,
         "avg_seq_len": avg_seq_len,
-        "avg_recon_mse": avg_recon_mse,
-        "avg_quantization_loss": avg_quant_loss,
+        "recon_mse_mean": recon_mse_mean,
+        "recon_mse_std": recon_mse_std,
+        "quant_loss_mean": quant_loss_mean,
+        "quant_loss_std": quant_loss_std,
     }
     input_filestem= args.input_path.stem
 

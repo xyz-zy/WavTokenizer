@@ -29,6 +29,11 @@ python infer2.py \
     --config_path ./configs/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn_2gpu.yaml \
     --model_path ./result/train/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn_2gpu/lightning_logs/version_0/checkpoints/wavtokenizer_checkpoint_epoch=28_step=233160_val_loss=4.6529.ckpt \
     --out_name WavTokenizer_small_600_24k_4096_repl_2gpu_v0_28ep
+
+python infer2.py \
+    --config_path ./configs/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn_8gpu_slurm.yaml \
+    --model_path "./result/train/wavtokenizer_smalldata_frame75_3s_nq1_code4096_dim512_kmeans200_attn_8gpu_slurm/lightning_logs/version_1/checkpoints/wavtokenizer_checkpoint_epoch=58_step=118590_val_loss=4.4702.ckpt" \
+    --out_name WavTokenizer_small_320_24k_4096_repl_8gpu_slurm_v1_58ep
 """
 
 parser = argparse.ArgumentParser()
