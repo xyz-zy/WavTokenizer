@@ -24,6 +24,10 @@ python metrics/infer.py --prepath ./result/infer/WavTokenizer_small_600_24k_4096
 
 python metrics/infer.py --prepath ./result/infer/WavTokenizer_small_320_24k_4096_repl
 
+python metrics/infer2.py --prepath ./result/infer_lowrank2/WavTokenizer_small_600_24k_4096/k4
+
+python metrics/infer2.py --prepath ./result/infer/WavTokenizer_small_320_24k_4096_repl_8gpu_slurm_v1_58ep
+
 """
 
 def main(prepath):
@@ -195,12 +199,15 @@ def main(prepath):
         utmos_sumencodec = sum(v['UTMOS_encodec'] for v in per_file_metrics.values())
         summary['UTMOS_encodec_sum'] = float(utmos_sumencodec)
         summary['UTMOS_encodec_mean'] = float(utmos_sumencodec / n) if n > 0 else None
+        summary['UTMOS_encodec_std'] = float(np.std([v['UTMOS_encodec'] for v in per_file_metrics.values()])) if n > 0 else None
 
         # PESQ mean: divide by number of non-None pesq entries
         pesq_sumpre = sum(v['PESQ'] for v in per_file_metrics.values() if v['PESQ'] is not None)
         summary['PESQ_sum'] = float(pesq_sumpre)
         pesq_count = sum(1 for v in per_file_metrics.values() if v.get('PESQ') is not None)
         summary['PESQ_mean'] = float(pesq_sumpre / pesq_count) if pesq_count > 0 else None
+        summary['PESQ_std'] = float(np.std([v['PESQ'] for v in per_file_metrics.values() if v['PESQ'] is not None])) if pesq_count > 0 else None
+
 
         # F1 mean over valid entries
         f1score_sumpre = sum(v['f1_score'] for v in per_file_metrics.values() if v['f1_score'] is not None)
@@ -208,10 +215,12 @@ def main(prepath):
         valid_f1_count = (n - f1score_filt)
         summary['F1_sum'] = float(f1score_sumpre)
         summary['F1_mean'] = float(f1score_sumpre / valid_f1_count) if valid_f1_count > 0 else None
+        summary['F1_std'] = float(np.std([v['f1_score'] for v in per_file_metrics.values() if v['f1_score'] is not None])) if valid_f1_count > 0 else None
         summary['F1_nan_count'] = int(f1score_filt)
 
         stoi_sumpre = [v['STOI'] for v in per_file_metrics.values() if v['STOI'] is not None]
         summary['STOI_mean'] = float(np.mean(stoi_sumpre)) if len(stoi_sumpre) > 0 else None
+        summary["STOI_std"] = float(np.std(stoi_sumpre)) if len(stoi_sumpre) > 0 else None
         return summary
     # compute summaries
     n = len(preaudio)
