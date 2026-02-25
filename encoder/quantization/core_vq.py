@@ -71,10 +71,18 @@ def sample_vectors(samples, num: int):
     return samples[indices]
 
 
-def kmeans(samples, num_clusters: int, num_iters: int = 10):
+def kmeans(
+    samples,
+    num_clusters: int,
+    num_iters: int = 10,
+    tol: float = 1e-4,
+    return_history: bool = False,
+):
     dim, dtype = samples.shape[-1], samples.dtype
 
     means = sample_vectors(samples, num_clusters)
+
+    history = []
 
     for _ in range(num_iters):
         diffs = rearrange(samples, "n d -> n () d") - rearrange(
@@ -83,6 +91,7 @@ def kmeans(samples, num_clusters: int, num_iters: int = 10):
         dists = -(diffs ** 2).sum(dim=-1)
 
         buckets = dists.max(dim=-1).indices
+        inertia = (-dists.gather(1, buckets[:, None])).sum().item()
         bins = torch.bincount(buckets, minlength=num_clusters)
         zero_mask = bins == 0
         bins_min_clamped = bins.masked_fill(zero_mask, 1)
@@ -91,8 +100,23 @@ def kmeans(samples, num_clusters: int, num_iters: int = 10):
         new_means.scatter_add_(0, repeat(buckets, "n -> n d", d=dim), samples)
         new_means = new_means / bins_min_clamped[..., None]
 
-        means = torch.where(zero_mask[..., None], means, new_means)
+        new_means = torch.where(zero_mask[..., None], means, new_means)
 
+        deltas = (new_means - means).norm(dim=-1)
+        moved = (deltas > tol).sum().item()
+        history.append(
+            {
+                "mean_delta": deltas.mean().item(),
+                "max_delta": deltas.max().item(),
+                "moved_centers": moved,
+                "inertia": inertia,
+            }
+        )
+
+        means = new_means
+
+    if return_history:
+        return means, bins, history
     return means, bins
 
 
@@ -138,13 +162,17 @@ class EuclideanCodebook(nn.Module):
         self.register_buffer("embed_avg", embed.clone())
         self.expired_codes = -1
 
+        self.kmeans_history = None
+
     @torch.jit.ignore
     def init_embed_(self, data):
         if self.inited:
             return
 
-        embed, cluster_size = kmeans(data, self.codebook_size, self.kmeans_iters) #data不变
-        self.embed.data.copy_(embed)
+        embed, cluster_size, kmeans_history = kmeans(
+            data, self.codebook_size, self.kmeans_iters, return_history=True
+        ) #data不变
+        self.kmeans_history = kmeans_history
         self.embed_avg.data.copy_(embed.clone())
         self.cluster_size.data.copy_(cluster_size)
         self.inited.data.copy_(torch.Tensor([True]))

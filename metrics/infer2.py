@@ -20,9 +20,9 @@ device = torch.device("cuda:0")
 # 如果是ljspeech，需要更换路径，更换数据读取逻辑，更换stoi的采样率
 
 """
-python metrics/infer.py --prepath ./result/infer/WavTokenizer_small_600_24k_4096_repl
+python metrics/infer2.py --prepath ./result/infer/WavTokenizer_small_600_24k_4096
 
-python metrics/infer.py --prepath ./result/infer/WavTokenizer_small_320_24k_4096_repl
+python metrics/infer2.py --prepath ./result/infer/WavTokenizer_small_320_24k_4096
 
 python metrics/infer2.py --prepath ./result/infer_lowrank2/WavTokenizer_small_600_24k_4096/k4
 

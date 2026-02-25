@@ -1,5 +1,6 @@
 import math
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -22,7 +23,6 @@ from einops import rearrange
 
 def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
     from sklearn.decomposition import PCA
-    import matplotlib.pyplot as plt
     # print(X.shape)
 
     n_comp = min(4, X.shape[1])
@@ -169,7 +169,6 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
     return fig12
 
 def histogram(data, title, xlabel, ylabel, bins=100):
-    import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
     ax.hist(data, bins=bins, color="tab:blue", alpha=0.7)
@@ -178,6 +177,21 @@ def histogram(data, title, xlabel, ylabel, bins=100):
     ax.set_ylabel(ylabel)
     return fig
 
+def plot_kmeans_history(kmeans_history):
+    inertia = [k["inertia"] for k in kmeans_history]
+    n_iter = range(1, len(inertia) + 1)
+
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    ax.plot(n_iter, inertia, color="tab:blue", alpha=0.7)
+    ax.set_title("KMeans History")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Inertia")
+
+    ax2 = ax.twinx()
+    n_changed = [k["moved_centers"] for k in kmeans_history]
+    ax2.plot(n_iter, n_changed, color="tab:orange", alpha=0.7)
+    ax2.set_ylabel("Number of centers changed", color="tab:orange")
+    return fig
 
 class VocosExp(pl.LightningModule):
     # noinspection PyUnusedLocal
@@ -363,6 +377,19 @@ class VocosExp(pl.LightningModule):
             total_assignments = quantizer._codebook.embed_onehot_sum.sum().item()
             self.log("quantizer/total_assignments_per_batch", total_assignments, on_step=True)
             self.log("quantizer/cluster_size_sum", quantizer._codebook.cluster_size.sum().item(), on_step=True)
+            threshold = quantizer._codebook.threshold_ema_dead_code
+            self.log("quantizer/threshold_ema_dead_code", threshold, on_step=True)
+
+            codebook_norms = torch.norm(quantizer._codebook.embed.data, p=2, dim=-1)
+            self.log("quantizer/codebook_l2_norm_mean", codebook_norms.mean().item(), on_step=True)
+            self.log("quantizer/codebook_l2_norm_std", codebook_norms.std().item(), on_step=True)
+
+            if self.global_step == 0 and self.global_rank == 0:
+                kmeans_history = quantizer._codebook.kmeans_history
+                fig = plot_kmeans_history(kmeans_history)
+                self.logger.experiment.add_figure(
+                    f"codebook_kmeans_history/step_{self.global_step}", fig, global_step=self.global_step
+                )
 
             if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
                 self.logger.experiment.add_audio(
