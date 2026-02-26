@@ -472,6 +472,27 @@ class VocosExp(pl.LightningModule):
                     global_step=self.global_step,
                 )
 
+                codebook_vecs = quantizer._codebook.embed
+                zero_thresh = 1e-6
+                zero_mask = codebook_vecs.norm(dim=1) < zero_thresh
+                zero_count = int(zero_mask.sum().item())
+                self.log(
+                    "codebook/zero_vectors",
+                    zero_count,
+                    on_step=True,
+                )
+                prev_zero_mask = getattr(quantizer._codebook, "_prev_zero_mask", None)
+                assigned_mask = quantizer._codebook.embed_onehot_sum > 0
+                if prev_zero_mask is not None:
+                    prev_zero_assigned = int((prev_zero_mask & assigned_mask).sum().item())
+                else:
+                    prev_zero_assigned = 0
+                self.log(
+                    "codebook/prev_zero_assigned",
+                    prev_zero_assigned,
+                    on_step=True,
+                )
+                quantizer._codebook._prev_zero_mask = zero_mask.detach()
 
             return loss
 
