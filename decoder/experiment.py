@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
 import torch
+import torch.nn.functional as F
 import torchaudio
 import transformers
 import yaml
@@ -157,6 +158,7 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
         filestem2 = f"latent_pca2{suf}"
         codebook_name2 = None
 
+    n_cb = 0 if cb_pca2 is None else len(cb_pca2)
     fig12 =_plot_pca_pair(
         X_pca2,
         cb_pca2,
@@ -164,7 +166,7 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
         codebook_name2,
         "PC 1",
         "PC 2",
-        f"Top-2 PCA of encoder latents (pre-quant) with codebook overlay\nn_latents={len(X_pca2)}, n_codebook={len(cb_pca2)}",
+        f"Top-2 PCA of encoder latents (pre-quant) with codebook overlay\nn_latents={len(X_pca2)}, n_codebook={n_cb}",
     )
     return fig12
 
@@ -235,6 +237,7 @@ class VocosExp(pl.LightningModule):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         plot_every_n_steps: int = 1000,
+        train_nerd_only: bool = False,
     ):
         """
         Args:
@@ -281,6 +284,8 @@ class VocosExp(pl.LightningModule):
 
         self.plot_every_n_steps = plot_every_n_steps
 
+        self.train_nerd_only = train_nerd_only
+
     def configure_optimizers(self):
         disc_params = [
             {"params": self.multiperioddisc.parameters()},
@@ -304,10 +309,29 @@ class VocosExp(pl.LightningModule):
             opt_gen, num_warmup_steps=self.hparams.num_warmup_steps, num_training_steps=max_steps,
         )
 
-        return (
-            [opt_disc, opt_gen],
-            [{"scheduler": scheduler_disc, "interval": "step"}, {"scheduler": scheduler_gen, "interval": "step"}],
+        codebook = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook
+        if hasattr(codebook.nerd_sampler, "dec"):
+            nerd_params = [{"params": codebook.nerd_sampler.dec.parameters()}]
+        else:
+            nerd_params = [{"params": codebook.nerd_sampler.parameters()}]
+        opt_nerd = torch.optim.AdamW(nerd_params, lr=codebook.nerd_config.lr)
+        scheduler_nerd = transformers.get_cosine_schedule_with_warmup(
+            opt_nerd, num_warmup_steps=self.hparams.num_warmup_steps, num_training_steps=max_steps,
         )
+
+        return (
+            [opt_nerd, opt_disc, opt_gen],
+            [
+                {"scheduler": scheduler_nerd, "interval": "step"},
+                {"scheduler": scheduler_disc, "interval": "step"},
+                {"scheduler": scheduler_gen, "interval": "step"},
+            ],
+        )
+
+        # return (
+        #     [opt_disc, opt_gen],
+        #     [{"scheduler": scheduler_disc, "interval": "step"}, {"scheduler": scheduler_gen, "interval": "step"}],
+        # )
 
     def forward(self, audio_input, **kwargs):
         features, _, commit_loss = self.feature_extractor(audio_input, **kwargs)
@@ -319,8 +343,104 @@ class VocosExp(pl.LightningModule):
     def training_step(self, batch, batch_idx, optimizer_idx, **kwargs):
         audio_input = batch
 
+        # train NERD
+        if optimizer_idx == 0 and self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.use_nerd:
+            quantizer = self.feature_extractor.encodec.quantizer.vq.layers[0]
+            quantizer.eval()
+            with torch.no_grad():
+                audio_input = audio_input.unsqueeze(1)
+                features = self.feature_extractor.encodec.encoder(audio_input)
+                # print(f"{features.shape=}")
+                features = rearrange(features, "b d n -> b n d")
+                features = quantizer.project_in(features)
+                # print(f"{features.shape=}")
+                # (B, C, T) to # (B*T, C)
+                B, T, C = features.shape
+                features = features.contiguous().view(B * T, C)
+                # 40FPS: 40 * 225 = 9000
+            features = features.detach()
+            quantizer.train()
+    
+            nerd_sampler = quantizer._codebook.nerd_sampler
+            nerd_cfg = quantizer._codebook.nerd_config
+            if hasattr(nerd_sampler, "dec"):
+                nerd_loss = nerd_sampler._train_step(features)
+            else:
+                nerd_loss = nerd_sampler._train_step(features, nerd_cfg.Kz)
+
+            self.log("nerd/nerd_loss", nerd_loss, on_step=True, on_epoch=False, prog_bar=True)
+            if hasattr(nerd_sampler, "dec"):
+                self.log("nerd/sigma", nerd_sampler.dec.sigma, on_step=True, on_epoch=False, prog_bar=True)
+            else:
+                # Log actual sigma stats from the low-rank sampler, not just bias.
+                sigma0 = F.softplus(nerd_sampler.logsigma_head.bias).mean()
+                self.log("nerd/sigma0", sigma0, on_step=True, on_epoch=False, prog_bar=True)
+                with torch.no_grad():
+                    z_dim = getattr(nerd_sampler, "z_dim", None)
+                    if z_dim is None:
+                        z_dim = nerd_cfg.dz
+                    k_log = min(1024, int(nerd_cfg.Kz))
+                    z = torch.randn(k_log, z_dim, device="cuda")
+                    _, sigma, s_lr = nerd_sampler.forward_components(z)
+                    self.log("nerd/sigma_mean", sigma.mean(), on_step=True, on_epoch=False, prog_bar=True)
+                    self.log("nerd/sigma_min", sigma.min(), on_step=True, on_epoch=False, prog_bar=False)
+                    self.log("nerd/sigma_max", sigma.max(), on_step=True, on_epoch=False, prog_bar=False)
+                    if s_lr is not None:
+                        self.log("nerd/s_lr_mean", s_lr.mean(), on_step=True, on_epoch=False, prog_bar=True)
+                        self.log("nerd/s_lr_min", s_lr.min(), on_step=True, on_epoch=False, prog_bar=False)
+                        self.log("nerd/s_lr_max", s_lr.max(), on_step=True, on_epoch=False, prog_bar=False)
+                    if getattr(nerd_sampler, "L", None) is not None:
+                        self.log("nerd/L_fro", nerd_sampler.L.norm(), on_step=True, on_epoch=False, prog_bar=False)
+
+            if self.global_step  % self.plot_every_n_steps == 0 and self.global_rank == 0:
+                print("Plotting NERD PCA visualization...")
+                features = features.cpu().numpy()
+                nerd_codebook = nerd_sampler.sample(1024).cpu().numpy()
+                print(f"features shape: {features.shape}, codebook shape: {nerd_codebook.shape}")
+                fig = plot_pca_components(features, nerd_codebook, 42)
+                
+                self.logger.experiment.add_figure(
+                    f"nerd_latent_space/pca_step_{self.global_step}", fig, global_step=self.global_step
+                )
+                # Also plot full samples (mu + sigma*eps + L*diag(s)*eps) for low-rank NERD.
+                if not hasattr(nerd_sampler, "dec"):
+                    with torch.no_grad():
+                        z_dim = getattr(nerd_sampler, "z_dim", None)
+                        if z_dim is None:
+                            z_dim = nerd_cfg.dz
+                        k_plot = 1024
+                        z = torch.randn(k_plot, z_dim, device="cuda")
+                        mu, sigma, s_lr = nerd_sampler.forward_components(z)
+                        eps1 = torch.randn_like(mu)
+                        y = mu + eps1 * sigma[:, None]
+                        if s_lr is not None and getattr(nerd_sampler, "L", None) is not None:
+                            eps2 = torch.randn_like(s_lr)
+                            lr = s_lr * eps2
+                            y = y + lr @ nerd_sampler.L.t()
+                        y_np = y.cpu().numpy()
+                    fig_full = plot_pca_components(features, y_np, 42, suffix="full")
+                    self.logger.experiment.add_figure(
+                        f"nerd_latent_space/pca_full_step_{self.global_step}",
+                        fig_full,
+                        global_step=self.global_step,
+                    )
+
+                # codebook = self.feature_extractor.encodec.quantizer.vq.layers[0]._codebook.embed.cpu().numpy()
+                # fig_cb = plot_pca_components(features, codebook, 42)
+                # self.logger.experiment.add_figure(
+                #     f"codebook_latent_space/pca_step_{self.global_step}", fig_cb, global_step=self.global_step
+                # )
+            
+            # if self.hparams.respawn_on_nerd_update:
+            #     # respawn dead codewords
+            #     codebook = quantizer._codebook
+            #     codebook.replace_all_with_nerd()
+            # self.log("nerd/commit_loss", commit_loss, prog_bar=True)
+            # total_nerd_loss = nerd_loss + 1000 * commit_loss
+            return nerd_loss
+
         # train discriminator
-        if optimizer_idx == 0 and self.train_discriminator:
+        if optimizer_idx == 1 and self.train_discriminator and not self.train_nerd_only:
             with torch.no_grad():
                 audio_hat, _ = self(audio_input, **kwargs)
 
@@ -346,7 +466,7 @@ class VocosExp(pl.LightningModule):
             return loss
 
         # train generator
-        if optimizer_idx == 1:
+        if optimizer_idx == 2 and not self.train_nerd_only:
             quantizer = self.feature_extractor.encodec.quantizer.vq.layers[0]
             if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
                 original_codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
@@ -407,10 +527,11 @@ class VocosExp(pl.LightningModule):
 
             if self.global_step == 0 and self.global_rank == 0:
                 kmeans_history = quantizer._codebook.kmeans_history
-                fig = plot_kmeans_history(kmeans_history)
-                self.logger.experiment.add_figure(
-                    f"codebook_kmeans_history/step_{self.global_step}", fig, global_step=self.global_step
-                )
+                if kmeans_history is not None:
+                    fig = plot_kmeans_history(kmeans_history)
+                    self.logger.experiment.add_figure(
+                        f"codebook_kmeans_history/step_{self.global_step}", fig, global_step=self.global_step
+                    )
 
             if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
                 self.logger.experiment.add_audio(
@@ -667,6 +788,7 @@ class WavTokenizer(VocosExp):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         plot_every_n_steps: int = 1000,
+        train_nerd_only: bool = False,
     ):
         super().__init__(
             feature_extractor,
@@ -686,6 +808,7 @@ class WavTokenizer(VocosExp):
             evaluate_periodicty,
             resume,
             plot_every_n_steps,
+            train_nerd_only=train_nerd_only,
         )
         # Override with conditional discriminators
         # VocosExp.__init__(self, feature_extractor, backbone, head, resume_config, resume_model)
@@ -741,7 +864,10 @@ class WavTokenizer(VocosExp):
             # feature_extractor.encodec.quantizer.load_state_dict(state_dict_fa_qa, strict=True)
             feature_extractor.encodec.encoder.load_state_dict(state_dict_fa_en, strict=True)
             feature_extractor.encodec.decoder.load_state_dict(state_dict_fa_de, strict=True)
-            feature_extractor.encodec.quantizer.load_state_dict(state_dict_fa_qa, strict=True)
+            # Allow missing NERD sampler weights when resuming from a checkpoint
+            # that predates NERD integration.
+            q_strict = not feature_extractor.encodec.quantizer.vq.layers[0]._codebook.use_nerd
+            feature_extractor.encodec.quantizer.load_state_dict(state_dict_fa_qa, strict=q_strict)
             backbone.load_state_dict(state_dict_bb, strict=True)
             head.load_state_dict(state_dict_hd, strict=True)
             self.feature_extractor = feature_extractor.to(self.device)

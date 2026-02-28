@@ -8,6 +8,20 @@ from decoder.modules import safe_log
 from encoder.modules import SEANetEncoder, SEANetDecoder
 from encoder import EncodecModel
 from encoder.quantization import ResidualVectorQuantizer
+from nerd.nerd_config import NERDConfig
+
+
+def _coerce_nerd_config(cfg):
+    if cfg is None or isinstance(cfg, NERDConfig):
+        return cfg
+    if isinstance(cfg, dict):
+        if "class_path" in cfg:
+            class_module, class_name = cfg["class_path"].rsplit(".", 1)
+            module = __import__(class_module, fromlist=[class_name])
+            args_class = getattr(module, class_name)
+            return args_class(**cfg.get("init_args", {}))
+        return NERDConfig(**cfg)
+    return cfg
 
 
 class FeatureExtractor(nn.Module):
@@ -62,6 +76,8 @@ class EncodecFeatures(FeatureExtractor):
         vq_bins: int = 16384,
         vq_kmeans: int = 800,
         threshold_ema_dead_code: float = 2.0,
+        nerd_config: NERDConfig = None,
+        use_nerd: bool = False,
     ):
         super().__init__()
 
@@ -77,8 +93,11 @@ class EncodecFeatures(FeatureExtractor):
                                 dimension=512, channels=1, n_filters=32, ratios=[8, 5, 4, 2], activation='ELU',
                                 kernel_size=7, residual_kernel_size=3, last_kernel_size=7, dilation_base=2,
                                 true_skip=False, compress=2)
+        nerd_config = _coerce_nerd_config(nerd_config)
+
         quantizer = ResidualVectorQuantizer(dimension=512, n_q=n_q, bins=vq_bins, kmeans_iters=vq_kmeans,
-                                            decay=0.99, kmeans_init=True, threshold_ema_dead_code=threshold_ema_dead_code)
+                                            decay=0.99, kmeans_init=True, threshold_ema_dead_code=threshold_ema_dead_code,
+                                            use_nerd=use_nerd, nerd_config=nerd_config)
 
         # breakpoint()
         if encodec_model == "encodec_24khz":
