@@ -168,6 +168,27 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
     )
     return fig12
 
+def pca_effective_dim(
+    X, var_thresh=0.99, max_samples=20000, random_state=0, svd_solver="randomized"
+):
+    # print(X.shape)
+    from sklearn.decomposition import PCA
+
+    if X.ndim != 2 or X.shape[0] == 0:
+        return 0
+    if X.shape[0] > max_samples:
+        rng = np.random.RandomState(random_state)
+        idx = rng.choice(X.shape[0], max_samples, replace=False)
+        X = X[idx]
+    n_comp = min(X.shape[0], X.shape[1])
+    pca = PCA(n_components=n_comp, svd_solver=svd_solver, random_state=random_state)
+    pca.fit(X)
+    # print(f"Explained variance ratios: {pca.explained_variance_ratio_}")
+    # print(len(pca.explained_variance_ratio_))
+    cumvar = np.cumsum(pca.explained_variance_ratio_)
+    k = 1 + int(np.searchsorted(cumvar, var_thresh))
+    return k
+
 def histogram(data, title, xlabel, ylabel, bins=100):
 
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
@@ -430,6 +451,11 @@ class VocosExp(pl.LightningModule):
                 features = features.detach().cpu().numpy()
 
                 codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
+                latent_eff_dim = pca_effective_dim(features, var_thresh=0.99, svd_solver="randomized")
+                codebook_eff_dim = pca_effective_dim(codebook, var_thresh=0.99, svd_solver="full")
+                self.log("pca/latent_eff_dim_99", latent_eff_dim, on_step=True)
+                self.log("pca/codebook_eff_dim_99", codebook_eff_dim, on_step=True)
+
                 fig_cb = plot_pca_components(features, codebook, 42)
                 self.logger.experiment.add_figure(
                     f"codebook_latent_space_pca/step_{self.global_step}", fig_cb, global_step=self.global_step
