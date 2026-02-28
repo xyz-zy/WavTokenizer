@@ -1,4 +1,5 @@
 import math
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -249,6 +250,7 @@ class VocosExp(pl.LightningModule):
         resume: bool = False,
         plot_every_n_steps: int = 1000,
         commit_loss_coeff: float = 1000,
+        commit_loss_ramp: Optional[dict] = None,
     ):
         """
         Args:
@@ -266,6 +268,9 @@ class VocosExp(pl.LightningModule):
             evaluate_pesq (bool, optional): If True, PESQ scores are computed for each validation run.
             evaluate_periodicty (bool, optional): If True, periodicity scores are computed for each validation run.
             commit_loss_coeff (float, optional): Coefficient for commitment loss. Default is 1000.
+            commit_loss_ramp (dict, optional): Ramp schedule for commitment loss coefficient.
+                Expected keys: {"steps": int, "start": float}. If provided, the coefficient
+                ramps linearly from start to commit_loss_coeff over steps batches.
         """
         super().__init__()
         self.save_hyperparameters(ignore=["feature_extractor", "backbone", "head"])
@@ -293,6 +298,8 @@ class VocosExp(pl.LightningModule):
 
         self.train_discriminator = False
         self.base_mel_coeff = self.mel_loss_coeff = mel_loss_coeff
+        self.base_commit_loss_coeff = commit_loss_coeff
+        self.commit_loss_ramp = commit_loss_ramp
         self.commit_loss_coeff = commit_loss_coeff
 
         self.plot_every_n_steps = plot_every_n_steps
@@ -396,19 +403,22 @@ class VocosExp(pl.LightningModule):
                 loss_gen_mp = loss_gen_mrd = loss_fm_mp = loss_fm_mrd = 0
 
             mel_loss = self.melspec_loss(audio_hat, audio_input)
+            commit_coeff = self._effective_commit_loss_coeff(self.global_step + 1)
+            self.commit_loss_coeff = commit_coeff
             loss = (
                 loss_gen_mp
                 + self.hparams.mrd_loss_coeff * loss_gen_mrd
                 + loss_fm_mp
                 + self.hparams.mrd_loss_coeff * loss_fm_mrd
                 + self.mel_loss_coeff * mel_loss
-                + self.commit_loss_coeff * commit_loss
+                + commit_coeff * commit_loss
                 + loss_dac_1
                 + loss_dac_2
             )
 
             self.log("generator/total_loss", loss, prog_bar=True)
             self.log("mel_loss_coeff", self.mel_loss_coeff)
+            self.log("commit_loss_coeff", commit_coeff, on_step=True)
             self.log("generator/mel_loss", mel_loss)
             self.log("quantizer/commit_loss", commit_loss)
             expired_codes = quantizer._codebook.expired_codes
@@ -427,10 +437,11 @@ class VocosExp(pl.LightningModule):
 
             if self.global_step == 0 and self.global_rank == 0:
                 kmeans_history = quantizer._codebook.kmeans_history
-                fig = plot_kmeans_history(kmeans_history)
-                self.logger.experiment.add_figure(
-                    f"codebook_kmeans_history/step_{self.global_step}", fig, global_step=self.global_step
-                )
+                if kmeans_history is not None:
+                    fig = plot_kmeans_history(kmeans_history)
+                    self.logger.experiment.add_figure(
+                        f"codebook_kmeans_history/step_{self.global_step}", fig, global_step=self.global_step
+                    )
 
             if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
                 self.logger.experiment.add_audio(
@@ -616,7 +627,8 @@ class VocosExp(pl.LightningModule):
             pesq_score = torch.zeros(1, device=self.device)
 
         mel_loss = self.melspec_loss(audio_hat.unsqueeze(1), audio_input.unsqueeze(1))
-        total_loss = mel_loss + (5 - utmos_score) + (5 - pesq_score) + 1000 * commit_loss
+        commit_coeff = self._effective_commit_loss_coeff(self.global_step + 1)
+        total_loss = mel_loss + (5 - utmos_score) + (5 - pesq_score) + commit_coeff * commit_loss
 
         return {
             "val_loss": total_loss,
@@ -676,6 +688,17 @@ class VocosExp(pl.LightningModule):
         """
         return self.trainer.fit_loop.epoch_loop.total_batch_idx
 
+    def _effective_commit_loss_coeff(self, step: int) -> float:
+        if self.commit_loss_ramp is None:
+            return self.base_commit_loss_coeff
+
+        steps = int(self.commit_loss_ramp["steps"])
+        start = float(self.commit_loss_ramp["start"])
+        if steps <= 0:
+            return self.base_commit_loss_coeff
+        progress = min(float(step) / float(steps), 1.0)
+        return start + (self.base_commit_loss_coeff - start) * progress
+
     def on_train_batch_start(self, *args):
         if self.global_step >= self.hparams.pretrain_mel_steps:
             self.train_discriminator = True
@@ -724,6 +747,7 @@ class WavTokenizer(VocosExp):
         resume: bool = False,
         plot_every_n_steps: int = 1000,
         commit_loss_coeff: float = 1000,
+        commit_loss_ramp: Optional[dict] = None,
     ):
         super().__init__(
             feature_extractor,
@@ -744,6 +768,7 @@ class WavTokenizer(VocosExp):
             resume,
             plot_every_n_steps,
             commit_loss_coeff=commit_loss_coeff,
+            commit_loss_ramp=commit_loss_ramp,
         )
         # Override with conditional discriminators
         # VocosExp.__init__(self, feature_extractor, backbone, head, resume_config, resume_model)
