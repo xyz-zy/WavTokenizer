@@ -31,6 +31,8 @@
 
 """Core vector quantization implementation."""
 
+import math
+import time
 import typing as tp
 import warnings
 
@@ -120,6 +122,102 @@ def kmeans(
     return means, bins
 
 
+_BA_LN2 = math.log(2.0)
+
+
+@torch.no_grad()
+def _ba_kmeanspp_init(Z: torch.Tensor, M: int, seed: int = 0, chunk: int = 8192) -> torch.Tensor:
+    """KMeans++ seeding. Z: (N, k) → Y: (M, k)."""
+    N, k = Z.shape
+    g = torch.Generator(device=Z.device).manual_seed(seed)
+    Y = torch.empty(M, k, device=Z.device)
+    Y[0] = Z[torch.randint(0, N, (1,), generator=g, device=Z.device)]
+    dmin = torch.full((N,), float("inf"), device=Z.device)
+    for m in range(1, M):
+        c = Y[m - 1:m]
+        for s in range(0, N, chunk):
+            d = ((Z[s:s + chunk] - c) ** 2).sum(-1)
+            dmin[s:s + chunk] = torch.minimum(dmin[s:s + chunk], d)
+        probs = dmin.clamp(min=1e-12)
+        Y[m] = Z[torch.multinomial(probs / probs.sum(), 1, generator=g)]
+        # if m % 512 == 0:
+        #     print(f"  kmeans++ init: {m}/{M}")
+    return Y
+
+
+@torch.no_grad()
+def _ba_pass(
+    Z: torch.Tensor, Y: torch.Tensor, logq: torch.Tensor, beta: float, chunk_N: int = 2048
+):
+    """One BA E-step. Returns (q_new, D, R_bits, num, den)."""
+    N, k = Z.shape
+    M = Y.shape[0]
+    y2 = (Y * Y).sum(-1)
+
+    q_acc = torch.zeros(M, device=Z.device)
+    num = torch.zeros(M, k, device=Z.device)
+    den = torch.zeros(M, device=Z.device)
+    D_sum = 0.0
+    I_sum = 0.0
+
+    for s in range(0, N, chunk_N):
+        z = Z[s:s + chunk_N]
+        d = ((z * z).sum(-1, keepdim=True) + y2 - 2 * z @ Y.t()).clamp(min=0)
+        logits = logq - beta * d
+        lse = torch.logsumexp(logits, dim=1, keepdim=True)
+        logp = logits - lse
+        p = torch.exp(logp)
+
+        q_acc += p.sum(0)
+        num += p.t() @ z
+        den += p.sum(0)
+        D_sum += (p * d).sum().item()
+        I_sum += (p * (logp - logq)).sum().item()
+
+    q_new = (q_acc / N).clamp(min=1e-30)
+    return q_new, D_sum / N, (I_sum / N) / _BA_LN2, num, den
+
+
+@torch.no_grad()
+def _ba_solve(
+    Z: torch.Tensor,
+    beta: float,
+    M: int,
+    Y_init: torch.Tensor,
+    outer_iters: int = 25,
+    inner_iters: int = 5,
+    tol_q: float = 1e-6,
+    chunk_N: int = 2048,
+    verbose: bool = False,
+) -> dict:
+    """Blahut-Arimoto solver. Returns dict: Y, q, logq, D, R_bits, elapsed_s, converged, n_outer_iters, final_delta."""
+    t_start = time.time()
+    logq = torch.full((M,), -math.log(M), device=Z.device)
+    Y = Y_init.clone()
+    delta = float("inf")
+
+    for t in range(outer_iters):
+        for _ in range(inner_iters):
+            q_new, D, R_bits, num, den = _ba_pass(Z, Y, logq, beta, chunk_N)
+            delta = (q_new - torch.exp(logq)).abs().max().item()
+            logq = torch.log(q_new)
+            if delta < tol_q:
+                break
+        Y = (num / (den.unsqueeze(1) + 1e-12)).contiguous()
+        if verbose:
+            print(f"  [outer {t:02d}] D={D:.6f}  R={R_bits:.4f} bits  |Δq|={delta:.2e}")
+        if delta < 1e-6:
+            break
+
+    converged = delta < 1e-6
+    n_outer_iters = t + 1  # t is 0-indexed; +1 gives number of outer iters completed
+
+    _, D, R_bits, _, _ = _ba_pass(Z, Y, logq, beta, chunk_N)
+    return {"Y": Y, "q": q_new, "logq": logq, "D": float(D), "R_bits": float(R_bits),
+            "elapsed_s": time.time() - t_start,
+            "converged": converged, "n_outer_iters": n_outer_iters, "final_delta": float(delta)}
+
+
 class EuclideanCodebook(nn.Module):
     """Codebook with Euclidean distance.
     Args:
@@ -163,6 +261,8 @@ class EuclideanCodebook(nn.Module):
         self.expired_codes = -1
 
         self.kmeans_history = None
+        self.use_ba_respawn = False  # set externally by experiment once global_step threshold is reached
+        self.ba_out = None
 
     @torch.jit.ignore
     def init_embed_(self, data):
@@ -196,6 +296,23 @@ class EuclideanCodebook(nn.Module):
         self.expired_codes_mask = expired_codes
         batch_samples = rearrange(batch_samples, "... d -> (...) d")
         self.replace_(batch_samples, mask=expired_codes)
+        distrib.broadcast_tensors(self.buffers())
+
+    @torch.no_grad()
+    def expire_codes_ba_(self, x):
+        self.ba_time = 0
+        if self.threshold_ema_dead_code == 0:
+            return
+        expired_codes = self.cluster_size < self.threshold_ema_dead_code
+        if not torch.any(expired_codes):
+            self.expired_codes = 0
+            return
+        self.expired_codes = expired_codes.sum().item()
+        self.expired_codes_mask = expired_codes
+        ba_out = self.run_ba(x, update_codebook=False)
+        self.ba_out = ba_out
+        ba_centroids = ba_out["embed_new"]               # [M, dim] pool to sample replacements from
+        self.replace_(ba_centroids, mask=expired_codes)  # samples from BA centroid pool
         distrib.broadcast_tensors(self.buffers())
 
     def preprocess(self, x):
@@ -233,6 +350,82 @@ class EuclideanCodebook(nn.Module):
         quantize = self.dequantize(embed_ind)
         return quantize
 
+    @torch.no_grad()
+    def run_ba(
+        self,
+        x: torch.Tensor,
+        beta: float = 10.0,
+        var_threshold: float = 0.99,
+        outer_iters: int = 25,
+        inner_iters: int = 5,
+        chunk_N: int = 2048,
+        seed: int = 0,
+        verbose: bool = False,
+        update_codebook: bool = False,
+    ) -> dict:
+        """Re-initialize the codebook using Blahut-Arimoto in a PCA subspace.
+
+        Runs PCA on x, projects to the subspace capturing var_threshold of the
+        variance, runs BA to find optimal centroids in that subspace, then
+        back-projects to the full latent dimension and stores the result in
+        self.embed / self.embed_avg.
+
+        Args:
+            x: Latent vectors of arbitrary leading shape with final dim matching
+               the codebook dimension, e.g. (B, T, dim) or (N, dim).
+            beta: Inverse temperature for BA (higher = lower distortion / higher rate).
+            var_threshold: Fraction of variance to retain in PCA subspace (0 < t <= 1).
+            outer_iters: Max outer BA iterations.
+            inner_iters: Max inner q-update iterations per outer step.
+            chunk_N: Chunk size for chunked distance computation.
+            seed: RNG seed for KMeans++ init.
+            verbose: Print per-iteration diagnostics.
+            update_codebook: Whether to update the codebook buffers.
+        Returns:
+            dict with keys: D, R_bits, k_pca, var_explained, elapsed_s.
+        """
+        x = self.preprocess(x).float()  # [N, dim]
+
+        # PCA
+        mu = x.mean(0)                          # [dim]
+        x_c = x - mu                            # centered
+        q_rank = min(x_c.shape[0], x_c.shape[1])
+        _, S, V = torch.pca_lowrank(x_c, q=q_rank, center=False)
+        var_ratio = (S ** 2).cumsum(0) / (S ** 2).sum()
+        k = int((var_ratio >= var_threshold).nonzero(as_tuple=False)[0, 0].item()) + 1
+        B = V[:, :k].contiguous()               # [dim, k]
+
+        if verbose:
+            print(f"  PCA: retaining k={k} components, var_explained={var_ratio[k-1]:.4f}")
+
+        Z = x_c @ B                             # [N, k]
+
+        # BA
+        Y_init = _ba_kmeanspp_init(Z, self.codebook_size, seed=seed)
+        out = _ba_solve(Z, beta, M=self.codebook_size, Y_init=Y_init,
+                        outer_iters=outer_iters, inner_iters=inner_iters,
+                        tol_q=1e-6, chunk_N=chunk_N, verbose=verbose)
+
+        # Back-project centroids to full dim
+        embed_new = out["Y"] @ B.t() + mu      # [M, dim]
+
+        if update_codebook:
+            # Update codebook buffers
+            self.embed.copy_(embed_new)
+            self.embed_avg.copy_(embed_new * self.threshold_ema_dead_code)
+            self.cluster_size.fill_(self.threshold_ema_dead_code)
+            self.inited.fill_(1.0)
+
+        return {
+            "embed_new": embed_new,
+            "D": out["D"],
+            "R_bits": out["R_bits"],
+            "k_pca": k,
+            "var_explained": float(var_ratio[k - 1].item()),
+            "elapsed_s": out["elapsed_s"],
+            "final_delta": out["final_delta"],
+        }
+
     def forward(self, x):
         shape, dtype = x.shape, x.dtype
         x = self.preprocess(x)
@@ -247,7 +440,8 @@ class EuclideanCodebook(nn.Module):
         if self.training:
             # We do the expiry of code at that point as buffers are in sync
             # and all the workers will take the same decision.
-            self.expire_codes_(x)
+            if not self.use_ba_respawn:
+                self.expire_codes_(x)
             self.embed_onehot_sum = embed_onehot.sum(0)
             ema_inplace(self.cluster_size, embed_onehot.sum(0), self.decay)
             embed_sum = x.t() @ embed_onehot
@@ -263,6 +457,8 @@ class EuclideanCodebook(nn.Module):
             )
             embed_normalized = self.embed_avg / cluster_size.unsqueeze(1)
             self.embed.data.copy_(embed_normalized)
+            if self.use_ba_respawn:
+                self.expire_codes_ba_(x)
 
         return quantize, embed_ind
 

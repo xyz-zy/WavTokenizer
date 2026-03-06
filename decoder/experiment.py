@@ -157,6 +157,8 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
         filestem2 = f"latent_pca2{suf}"
         codebook_name2 = None
 
+    n_codebook = None if codebook_vectors is None else len(codebook_vectors)
+
     fig12 =_plot_pca_pair(
         X_pca2,
         cb_pca2,
@@ -164,7 +166,7 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
         codebook_name2,
         "PC 1",
         "PC 2",
-        f"Top-2 PCA of encoder latents (pre-quant) with codebook overlay\nn_latents={len(X_pca2)}, n_codebook={len(cb_pca2)}",
+        f"Top-2 PCA of encoder latents (pre-quant) with codebook overlay\nn_latents={len(X_pca2)}, n_codebook={n_codebook}",
     )
     return fig12
 
@@ -235,6 +237,7 @@ class VocosExp(pl.LightningModule):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         plot_every_n_steps: int = 1000,
+        start_ba_respawn_iter: int = None,
     ):
         """
         Args:
@@ -348,8 +351,12 @@ class VocosExp(pl.LightningModule):
         # train generator
         if optimizer_idx == 1:
             quantizer = self.feature_extractor.encodec.quantizer.vq.layers[0]
+            start_ba = self.hparams.get("start_ba_respawn_iter", None)
+            if start_ba is not None and self.global_step >= start_ba:
+                quantizer._codebook.use_ba_respawn = True
             if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
                 original_codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
+            # print(f"{quantizer._codebook.use_ba_respawn=}")
 
             audio_hat, commit_loss = self(audio_input, **kwargs)
             if self.train_discriminator:
@@ -404,6 +411,13 @@ class VocosExp(pl.LightningModule):
             codebook_norms = torch.norm(quantizer._codebook.embed.data, p=2, dim=-1)
             self.log("quantizer/codebook_l2_norm_mean", codebook_norms.mean().item(), on_step=True)
             self.log("quantizer/codebook_l2_norm_std", codebook_norms.std().item(), on_step=True)
+
+            if quantizer._codebook.use_ba_respawn:
+                self.log("ba/ba_time", quantizer._codebook.ba_out["elapsed_s"], on_step=True)
+                self.log("ba/ba_delta", quantizer._codebook.ba_out["final_delta"], on_step=True)
+                self.log("ba/k_pca", quantizer._codebook.ba_out["k_pca"], on_step=True)
+                self.log("ba/D", quantizer._codebook.ba_out["D"], on_step=True)
+                self.log("ba/R_bits", quantizer._codebook.ba_out["R_bits"], on_step=True)
 
             if self.global_step == 0 and self.global_rank == 0:
                 kmeans_history = quantizer._codebook.kmeans_history
@@ -519,6 +533,16 @@ class VocosExp(pl.LightningModule):
                     on_step=True,
                 )
                 quantizer._codebook._prev_zero_mask = zero_mask.detach()
+
+
+                if quantizer._codebook.use_ba_respawn:
+                    ba_codebook = quantizer._codebook.ba_out["embed_new"]
+                    fig_cb_respawned = plot_pca_components(features, ba_codebook.detach().cpu().numpy(), 42)
+                    self.logger.experiment.add_figure(
+                        f"ba_viz/step_{self.global_step}",
+                        fig_cb_respawned,
+                        global_step=self.global_step,
+                    )
 
             return loss
 
@@ -667,6 +691,7 @@ class WavTokenizer(VocosExp):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         plot_every_n_steps: int = 1000,
+        start_ba_respawn_iter: int = None,
     ):
         super().__init__(
             feature_extractor,
@@ -686,6 +711,7 @@ class WavTokenizer(VocosExp):
             evaluate_periodicty,
             resume,
             plot_every_n_steps,
+            start_ba_respawn_iter,
         )
         # Override with conditional discriminators
         # VocosExp.__init__(self, feature_extractor, backbone, head, resume_config, resume_model)
