@@ -19,7 +19,6 @@ from decoder.models import Backbone
 from decoder.modules import safe_log
 from decoder.pretrained_model import instantiate_class
 
-from einops import rearrange
 
 def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
     from sklearn.decomposition import PCA
@@ -435,20 +434,7 @@ class VocosExp(pl.LightningModule):
                     dataformats="HWC",
                 )
 
-                with torch.no_grad():
-                    # print(f"{audio_input.shape=}")
-                    audio_input = audio_input.unsqueeze(1)
-                    features = self.feature_extractor.encodec.encoder(audio_input)
-                    # print(f"{features.shape=}")
-                    features = rearrange(features, "b d n -> b n d")
-                    features = quantizer.project_in(features)
-                    # print(f"{features.shape=}")
-                    # (B, C, T) to # (B*T, C)
-                    B, T, C = features.shape
-                    features = features.contiguous().view(B * T, C)
-                    # 40 * 225 = 9000
-                    # print(f"{features.shape=}")
-                features = features.detach().cpu().numpy()
+                features = quantizer._codebook._last_input.cpu().numpy()
 
                 codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
                 latent_eff_dim = pca_effective_dim(features, var_thresh=0.99, svd_solver="randomized")

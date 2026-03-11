@@ -236,6 +236,7 @@ class EuclideanCodebook(nn.Module):
     def forward(self, x):
         shape, dtype = x.shape, x.dtype
         x = self.preprocess(x)
+        self._last_input = x.detach()
 
         self.init_embed_(x)
 
