@@ -234,6 +234,7 @@ class VocosExp(pl.LightningModule):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         plot_every_n_steps: int = 1000,
+        use_discriminator: bool = True,
     ):
         """
         Args:
@@ -250,6 +251,7 @@ class VocosExp(pl.LightningModule):
             evaluate_utmos (bool, optional): If True, UTMOS scores are computed for each validation run.
             evaluate_pesq (bool, optional): If True, PESQ scores are computed for each validation run.
             evaluate_periodicty (bool, optional): If True, periodicity scores are computed for each validation run.
+            use_discriminator (bool, optional): If False, skip discriminator training entirely (mel loss only). Default is True.
         """
         super().__init__()
         self.save_hyperparameters(ignore=["feature_extractor", "backbone", "head"])
@@ -295,6 +297,13 @@ class VocosExp(pl.LightningModule):
         opt_disc = torch.optim.AdamW(disc_params, lr=self.hparams.initial_learning_rate)
         opt_gen = torch.optim.AdamW(gen_params, lr=self.hparams.initial_learning_rate)
 
+        if not self.hparams.use_discriminator:
+            max_steps = self.trainer.max_steps
+            scheduler_gen = transformers.get_cosine_schedule_with_warmup(
+                opt_gen, num_warmup_steps=self.hparams.num_warmup_steps, num_training_steps=max_steps,
+            )
+            return [opt_gen], [{"scheduler": scheduler_gen, "interval": "step"}]
+
         max_steps = self.trainer.max_steps // 2  # Max steps per optimizer
         scheduler_disc = transformers.get_cosine_schedule_with_warmup(
             opt_disc, num_warmup_steps=self.hparams.num_warmup_steps, num_training_steps=max_steps,
@@ -315,8 +324,12 @@ class VocosExp(pl.LightningModule):
         audio_output = self.head(x)
         return audio_output, commit_loss
 
-    def training_step(self, batch, batch_idx, optimizer_idx, **kwargs):
+    def training_step(self, batch, batch_idx, optimizer_idx=0, **kwargs):
         audio_input = batch
+
+        # When not using discriminator, single optimizer always runs the generator step
+        if not self.hparams.use_discriminator:
+            optimizer_idx = 1
 
         # train discriminator
         if optimizer_idx == 0 and self.train_discriminator:
@@ -376,6 +389,7 @@ class VocosExp(pl.LightningModule):
                 self.log("generator/loss_dac_2", loss_dac_2)
             else:
                 loss_gen_mp = loss_gen_mrd = loss_fm_mp = loss_fm_mrd = 0
+                loss_dac_1 = loss_dac_2 = 0
 
             mel_loss = self.melspec_loss(audio_hat, audio_input)
             loss = (
@@ -622,14 +636,14 @@ class VocosExp(pl.LightningModule):
         return self.trainer.fit_loop.epoch_loop.total_batch_idx
 
     def on_train_batch_start(self, *args):
-        if self.global_step >= self.hparams.pretrain_mel_steps:
+        if self.hparams.use_discriminator and self.global_step >= self.hparams.pretrain_mel_steps:
             self.train_discriminator = True
         else:
             self.train_discriminator = False
 
     def on_train_batch_end(self, *args):
         def mel_loss_coeff_decay(current_step, num_cycles=0.5):
-            max_steps = self.trainer.max_steps // 2
+            max_steps = self.trainer.max_steps // (2 if self.hparams.use_discriminator else 1)
             if current_step < self.hparams.num_warmup_steps:
                 return 1.0
             progress = float(current_step - self.hparams.num_warmup_steps) / float(
@@ -668,6 +682,7 @@ class WavTokenizer(VocosExp):
         evaluate_periodicty: bool = False,
         resume: bool = False,
         plot_every_n_steps: int = 1000,
+        use_discriminator: bool = True,
     ):
         super().__init__(
             feature_extractor,
@@ -687,6 +702,7 @@ class WavTokenizer(VocosExp):
             evaluate_periodicty,
             resume,
             plot_every_n_steps,
+            use_discriminator,
         )
         # Override with conditional discriminators
         # VocosExp.__init__(self, feature_extractor, backbone, head, resume_config, resume_model)
