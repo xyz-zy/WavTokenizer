@@ -163,7 +163,7 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
         codebook_name2,
         "PC 1",
         "PC 2",
-        f"Top-2 PCA of encoder latents (pre-quant) with codebook overlay\nn_latents={len(X_pca2)}, n_codebook={len(cb_pca2)}",
+        f"Top-2 PCA of encoder latents (pre-quant)" + (f" with codebook overlay\nn_latents={len(X_pca2)}, n_codebook={len(cb_pca2)}" if cb_pca2 is not None else f"\nn_latents={len(X_pca2)}"),
     )
     return fig12
 
@@ -346,9 +346,10 @@ class VocosExp(pl.LightningModule):
 
         # train generator
         if optimizer_idx == 1:
-            quantizer = self.feature_extractor.encodec.quantizer.vq.layers[0]
-            if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
-                original_codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
+            if not self.feature_extractor.novq:
+                quantizer = self.feature_extractor.encodec.quantizer.vq.layers[0]
+                if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
+                    original_codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
 
             audio_hat, commit_loss = self(audio_input, **kwargs)
             if self.train_discriminator:
@@ -391,25 +392,26 @@ class VocosExp(pl.LightningModule):
             self.log("generator/total_loss", loss, prog_bar=True)
             self.log("mel_loss_coeff", self.mel_loss_coeff)
             self.log("generator/mel_loss", mel_loss)
-            self.log("quantizer/commit_loss", commit_loss)
-            expired_codes = quantizer._codebook.expired_codes
-            self.log("quantizer/expired_codes", expired_codes, on_step=True, prog_bar=True)
-            total_assignments = quantizer._codebook.embed_onehot_sum.sum().item()
-            self.log("quantizer/total_assignments_per_batch", total_assignments, on_step=True)
-            self.log("quantizer/cluster_size_sum", quantizer._codebook.cluster_size.sum().item(), on_step=True)
-            threshold = quantizer._codebook.threshold_ema_dead_code
-            self.log("quantizer/threshold_ema_dead_code", threshold, on_step=True)
+            if not self.feature_extractor.novq:
+                expired_codes = quantizer._codebook.expired_codes
+                self.log("quantizer/commit_loss", commit_loss)
+                self.log("quantizer/expired_codes", expired_codes, on_step=True, prog_bar=True)
+                total_assignments = quantizer._codebook.embed_onehot_sum.sum().item()
+                self.log("quantizer/total_assignments_per_batch", total_assignments, on_step=True)
+                self.log("quantizer/cluster_size_sum", quantizer._codebook.cluster_size.sum().item(), on_step=True)
+                threshold = quantizer._codebook.threshold_ema_dead_code
+                self.log("quantizer/threshold_ema_dead_code", threshold, on_step=True)
 
-            codebook_norms = torch.norm(quantizer._codebook.embed.data, p=2, dim=-1)
-            self.log("quantizer/codebook_l2_norm_mean", codebook_norms.mean().item(), on_step=True)
-            self.log("quantizer/codebook_l2_norm_std", codebook_norms.std().item(), on_step=True)
+                codebook_norms = torch.norm(quantizer._codebook.embed.data, p=2, dim=-1)
+                self.log("quantizer/codebook_l2_norm_mean", codebook_norms.mean().item(), on_step=True)
+                self.log("quantizer/codebook_l2_norm_std", codebook_norms.std().item(), on_step=True)
 
-            if self.global_step == 0 and self.global_rank == 0:
-                kmeans_history = quantizer._codebook.kmeans_history
-                fig = plot_kmeans_history(kmeans_history)
-                self.logger.experiment.add_figure(
-                    f"codebook_kmeans_history/step_{self.global_step}", fig, global_step=self.global_step
-                )
+                if self.global_step == 0 and self.global_rank == 0:
+                    kmeans_history = quantizer._codebook.kmeans_history
+                    fig = plot_kmeans_history(kmeans_history)
+                    self.logger.experiment.add_figure(
+                        f"codebook_kmeans_history/step_{self.global_step}", fig, global_step=self.global_step
+                    )
 
             if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
                 self.logger.experiment.add_audio(
@@ -434,77 +436,90 @@ class VocosExp(pl.LightningModule):
                     dataformats="HWC",
                 )
 
-                features = quantizer._codebook._last_input.cpu().numpy()
-
-                codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
+                with torch.no_grad():
+                    _emb = self.feature_extractor.encodec.encoder(audio_input.unsqueeze(1))
+                features = _emb.permute(0, 2, 1).reshape(-1, _emb.shape[1]).cpu().numpy()
                 latent_eff_dim = pca_effective_dim(features, var_thresh=0.99, svd_solver="randomized")
-                codebook_eff_dim = pca_effective_dim(codebook, var_thresh=0.99, svd_solver="full")
                 self.log("pca/latent_eff_dim_99", latent_eff_dim, on_step=True)
-                self.log("pca/codebook_eff_dim_99", codebook_eff_dim, on_step=True)
 
-                fig_cb = plot_pca_components(features, codebook, 42)
-                self.logger.experiment.add_figure(
-                    f"codebook_latent_space_pca/step_{self.global_step}", fig_cb, global_step=self.global_step
-                )
+                l2_norms = np.linalg.norm(features, axis=1)
+                self.log("latent/l2_norm_mean", float(l2_norms.mean()), on_step=True)
+                self.log("latent/l2_norm_std", float(l2_norms.std()), on_step=True)
 
-                respawned_codes_mask = quantizer._codebook.expired_codes_mask.detach().cpu().numpy()
-                dead_codes = original_codebook[respawned_codes_mask]
-                alive_codes = original_codebook[~respawned_codes_mask]
-                # print(len(dead_codes), "codes respawned")
-                fig_cb_respawned = plot_pca_components(features, dead_codes, 42)
+                fig_latents = plot_pca_components(features, None, 42)
                 self.logger.experiment.add_figure(
-                    f"codebook_latent_space_pca_dead/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
+                    f"latent_space_pca/step_{self.global_step}", fig_latents, global_step=self.global_step
                 )
-                fig_cb_respawned = plot_pca_components(features, alive_codes, 42)
-                self.logger.experiment.add_figure(
-                    f"codebook_latent_space_pca_alive/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
-                )
+                plt.close(fig_latents)
 
-                respawned_codes = codebook[respawned_codes_mask]
-                # print(len(respawned_codes), "codes respawned")
-                fig_cb_respawned = plot_pca_components(features, respawned_codes, 42)
-                self.logger.experiment.add_figure(
-                    f"codebook_latent_space_pca_respawned/step_{self.global_step}",
-                    fig_cb_respawned,
-                    global_step=self.global_step,
-                )
+                if not self.feature_extractor.novq:
+                    codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
+                    codebook_eff_dim = pca_effective_dim(codebook, var_thresh=0.99, svd_solver="full")
+                    self.log("pca/codebook_eff_dim_99", codebook_eff_dim, on_step=True)
 
-                bins = np.arange(0, 10, 0.2)
-                # print(quantizer._codebook.cluster_size.cpu().numpy())
-                fig = histogram(
-                    data=quantizer._codebook.cluster_size.cpu().numpy(),
-                    title="EMA Cluster Size Histogram",
-                    xlabel="Cluster Size",
-                    ylabel="Frequency",
-                    bins=bins,
-                )
-                self.logger.experiment.add_figure(
-                    f"codebook_cluster_size_histogram/step_{self.global_step}",
-                    fig,
-                    global_step=self.global_step,
-                )
+                    fig_cb = plot_pca_components(features, codebook, 42)
+                    self.logger.experiment.add_figure(
+                        f"codebook_latent_space_pca/step_{self.global_step}", fig_cb, global_step=self.global_step
+                    )
 
-                codebook_vecs = quantizer._codebook.embed
-                zero_thresh = 1e-6
-                zero_mask = codebook_vecs.norm(dim=1) < zero_thresh
-                zero_count = int(zero_mask.sum().item())
-                self.log(
-                    "codebook/zero_vectors",
-                    zero_count,
-                    on_step=True,
-                )
-                prev_zero_mask = getattr(quantizer._codebook, "_prev_zero_mask", None)
-                assigned_mask = quantizer._codebook.embed_onehot_sum > 0
-                if prev_zero_mask is not None:
-                    prev_zero_assigned = int((prev_zero_mask & assigned_mask).sum().item())
-                else:
-                    prev_zero_assigned = 0
-                self.log(
-                    "codebook/prev_zero_assigned",
-                    prev_zero_assigned,
-                    on_step=True,
-                )
-                quantizer._codebook._prev_zero_mask = zero_mask.detach()
+                    respawned_codes_mask = quantizer._codebook.expired_codes_mask.detach().cpu().numpy()
+                    dead_codes = original_codebook[respawned_codes_mask]
+                    alive_codes = original_codebook[~respawned_codes_mask]
+                    # print(len(dead_codes), "codes respawned")
+                    fig_cb_respawned = plot_pca_components(features, dead_codes, 42)
+                    self.logger.experiment.add_figure(
+                        f"codebook_latent_space_pca_dead/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
+                    )
+                    fig_cb_respawned = plot_pca_components(features, alive_codes, 42)
+                    self.logger.experiment.add_figure(
+                        f"codebook_latent_space_pca_alive/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
+                    )
+
+                    respawned_codes = codebook[respawned_codes_mask]
+                    # print(len(respawned_codes), "codes respawned")
+                    fig_cb_respawned = plot_pca_components(features, respawned_codes, 42)
+                    self.logger.experiment.add_figure(
+                        f"codebook_latent_space_pca_respawned/step_{self.global_step}",
+                        fig_cb_respawned,
+                        global_step=self.global_step,
+                    )
+
+                    bins = np.arange(0, 10, 0.2)
+                    # print(quantizer._codebook.cluster_size.cpu().numpy())
+                    fig = histogram(
+                        data=quantizer._codebook.cluster_size.cpu().numpy(),
+                        title="EMA Cluster Size Histogram",
+                        xlabel="Cluster Size",
+                        ylabel="Frequency",
+                        bins=bins,
+                    )
+                    self.logger.experiment.add_figure(
+                        f"codebook_cluster_size_histogram/step_{self.global_step}",
+                        fig,
+                        global_step=self.global_step,
+                    )
+
+                    codebook_vecs = quantizer._codebook.embed
+                    zero_thresh = 1e-6
+                    zero_mask = codebook_vecs.norm(dim=1) < zero_thresh
+                    zero_count = int(zero_mask.sum().item())
+                    self.log(
+                        "codebook/zero_vectors",
+                        zero_count,
+                        on_step=True,
+                    )
+                    prev_zero_mask = getattr(quantizer._codebook, "_prev_zero_mask", None)
+                    assigned_mask = quantizer._codebook.embed_onehot_sum > 0
+                    if prev_zero_mask is not None:
+                        prev_zero_assigned = int((prev_zero_mask & assigned_mask).sum().item())
+                    else:
+                        prev_zero_assigned = 0
+                    self.log(
+                        "codebook/prev_zero_assigned",
+                        prev_zero_assigned,
+                        on_step=True,
+                    )
+                    quantizer._codebook._prev_zero_mask = zero_mask.detach()
 
             return loss
 

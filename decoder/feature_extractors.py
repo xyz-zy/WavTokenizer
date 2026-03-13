@@ -57,11 +57,12 @@ class EncodecFeatures(FeatureExtractor):
         encodec_model: str = "encodec_24khz",
         bandwidths: List[float] = [1.5, 3.0, 6.0, 12.0],
         train_codebooks: bool = False,
-        num_quantizers: int = 1, 
+        num_quantizers: int = 1,
         dowmsamples: List[int] = [6, 5, 5, 4],
         vq_bins: int = 16384,
         vq_kmeans: int = 800,
         threshold_ema_dead_code: float = 2.0,
+        novq: bool = False,
     ):
         super().__init__()
 
@@ -94,6 +95,7 @@ class EncodecFeatures(FeatureExtractor):
         # codebook_weights = torch.cat([vq.codebook for vq in self.encodec.quantizer.vq.layers[: self.num_q]], dim=0)
         # self.codebook_weights = torch.nn.Parameter(codebook_weights, requires_grad=train_codebooks)
         self.bandwidths = bandwidths
+        self.novq = novq
 
     # @torch.no_grad()
     # def get_encodec_codes(self, audio):
@@ -111,6 +113,8 @@ class EncodecFeatures(FeatureExtractor):
         # breakpoint()
 
         emb = self.encodec.encoder(audio)
+        if self.novq:
+            return emb, None, torch.zeros((), device=emb.device)
         q_res = self.encodec.quantizer(emb, self.frame_rate, bandwidth=self.bandwidths[bandwidth_id])
         quantized = q_res.quantized
         codes = q_res.codes
@@ -134,6 +138,8 @@ class EncodecFeatures(FeatureExtractor):
 
         audio = audio.unsqueeze(1)                  # audio(16,24000)
         emb = self.encodec.encoder(audio)
+        if self.novq:
+            return emb, None, torch.zeros((), device=emb.device)
         q_res = self.encodec.quantizer.infer(emb, self.frame_rate, bandwidth=self.bandwidths[bandwidth_id])
         quantized = q_res.quantized
         codes = q_res.codes
