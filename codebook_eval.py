@@ -148,6 +148,10 @@ def main():
     if vocab_size is None:
         raise RuntimeError(" vocab_size not found in config")
 
+    is_novq = getattr(wavtokenizer.feature_extractor, 'novq', False)
+    if is_novq:
+        print("novq=True detected: codebook metrics will be skipped; computing recon MSE only.")
+
     with open(args.input_path, "r") as f:
         files = [l.strip() for l in f if l.strip()]
 
@@ -176,14 +180,12 @@ def main():
             print(f"encode_infer failed for {p}: {e}")
             continue
 
-        codes = safe_flatten_codes(discrete_code)
-        if codes.size == 0:
-            continue
-
-        all_codes.append(codes)
-        unique_codes = np.unique(codes)
-        per_file_unique.append(len(unique_codes))
-        per_file_len.append(codes.size)
+        if discrete_code is not None:
+            codes = safe_flatten_codes(discrete_code)
+            if codes.size > 0:
+                all_codes.append(codes)
+                per_file_unique.append(len(np.unique(codes)))
+                per_file_len.append(codes.size)
 
         # attempt decode and compute MSE
         try:
@@ -199,53 +201,65 @@ def main():
             pass
 
         # compute quantization loss: L2 between encoder latent and quantized (dequantized) vector
-        try:
-            # replicate encoder + quantizer inference to obtain encoder latent and quantized output
-            # prepare audio in same shape as feature extractor expects
-            audio_in = wav
-            if audio_in.dim() == 2:
-                audio_for_encoder = audio_in.unsqueeze(1)
-            else:
-                audio_for_encoder = audio_in
+        if not is_novq:
+            try:
+                # replicate encoder + quantizer inference to obtain encoder latent and quantized output
+                # prepare audio in same shape as feature extractor expects
+                audio_in = wav
+                if audio_in.dim() == 2:
+                    audio_for_encoder = audio_in.unsqueeze(1)
+                else:
+                    audio_for_encoder = audio_in
 
-            emb = wavtokenizer.feature_extractor.encodec.encoder(audio_for_encoder)
-            # select bandwidth value (float) from feature_extractor.bandwidths
-            bw_list = wavtokenizer.feature_extractor.bandwidths
-            bw_idx = int(bandwidth_id.view(-1).cpu().numpy()[0]) if isinstance(bandwidth_id, torch.Tensor) else int(bandwidth_id)
-            bw_val = bw_list[bw_idx]
-            q_res = wavtokenizer.feature_extractor.encodec.quantizer.infer(emb, wavtokenizer.feature_extractor.frame_rate, bandwidth=bw_val)
-            # emb and q_res.quantized are both (B, D, L) so compute MSE
-            qloss = float(torch.mean((emb - q_res.quantized) ** 2).cpu().item())
-            quant_losses.append(qloss)
-        except Exception:
-            pass
+                emb = wavtokenizer.feature_extractor.encodec.encoder(audio_for_encoder)
+                # select bandwidth value (float) from feature_extractor.bandwidths
+                bw_list = wavtokenizer.feature_extractor.bandwidths
+                bw_idx = int(bandwidth_id.view(-1).cpu().numpy()[0]) if isinstance(bandwidth_id, torch.Tensor) else int(bandwidth_id)
+                bw_val = bw_list[bw_idx]
+                q_res = wavtokenizer.feature_extractor.encodec.quantizer.infer(emb, wavtokenizer.feature_extractor.frame_rate, bandwidth=bw_val)
+                # emb and q_res.quantized are both (B, D, L) so compute MSE
+                qloss = float(torch.mean((emb - q_res.quantized) ** 2).cpu().item())
+                quant_losses.append(qloss)
+            except Exception:
+                pass
 
-    if len(all_codes) == 0:
+    if all_codes:
+        all_codes_np = np.concatenate(all_codes).astype(np.int64)
+        total_codes = int(all_codes_np.size)
+        counts = np.bincount(all_codes_np, minlength=int(vocab_size))
+        used = int(np.sum(counts > 0))
+        utilization = float(used) / float(vocab_size) if vocab_size > 0 else -1.0
+        entropy = compute_entropy_from_counts(counts)
+        perplexity = float(2 ** entropy)
+        avg_unique_per_utt = float(np.mean(per_file_unique))
+        avg_seq_len = float(np.mean(per_file_len))
+    elif not is_novq:
         print("No codes collected; exiting.")
         return
+    else:
+        # novq model — no discrete codes; codebook metrics are undefined
+        total_codes = None
+        used = None
+        utilization = None
+        entropy = None
+        perplexity = None
+        avg_unique_per_utt = None
+        avg_seq_len = None
 
-    all_codes = np.concatenate(all_codes).astype(np.int64)
-    total_codes = all_codes.size
-
-    counts = np.bincount(all_codes, minlength=int(vocab_size))
-    used = int(np.sum(counts > 0))
-    utilization = float(used) / float(vocab_size) if vocab_size > 0 else -1.0
-    entropy = compute_entropy_from_counts(counts)
-    perplexity = float(2**entropy)
-
-    avg_unique_per_utt = float(np.mean(per_file_unique)) if per_file_unique else 0.0
-    avg_seq_len = float(np.mean(per_file_len)) if per_file_len else 0.0
     recon_mse_mean = float(np.mean(recon_mses)) if recon_mses else None
     recon_mse_std = float(np.std(recon_mses)) if recon_mses else None
-    quant_loss_mean = float(np.mean(quant_losses)) if quant_losses else None
-    quant_loss_std = float(np.std(quant_losses)) if quant_losses else None
+    if is_novq and not quant_losses:
+        quant_loss_mean, quant_loss_std = 0.0, 0.0
+    else:
+        quant_loss_mean = float(np.mean(quant_losses)) if quant_losses else None
+        quant_loss_std = float(np.std(quant_losses)) if quant_losses else None
 
     report = {
         "total_files": len(files),
         "files_with_codes": len(per_file_len),
-        "total_codes": int(total_codes),
+        "total_codes": total_codes,
         "vocab_size": int(vocab_size),
-        "used_codes": int(used),
+        "used_codes": used,
         "utilization": utilization,
         "entropy_bits": entropy,
         "perplexity": perplexity,
