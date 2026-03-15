@@ -36,8 +36,8 @@ model:
     evaluate_periodicty: true
 
     resume: true
-    resume_config: /orcd/scratch/orcd/009/lxz/WavTokenizer-novq/configs/wavtokenizer_smalldata_frame75_3s_nq1_novq_dim512_kmeans200_attn_2gpu.yaml
-    resume_model: /orcd/scratch/orcd/009/lxz/WavTokenizer-novq/novq/ep42_kmeans_sklearnpp_40960_thresh2.0.ckpt
+    resume_config: /mnt/ssd/WavTokenizer-novq/configs/wavtokenizer_smalldata_frame75_3s_nq1_novq_dim512_kmeans200_attn_2gpu.yaml
+    resume_model: /mnt/ssd/WavTokenizer-novq/novq/ep42_kmeans_sklearnpp_40960_thresh2.0.ckpt
 
     feature_extractor:
       class_path: decoder.feature_extractors.EncodecFeatures

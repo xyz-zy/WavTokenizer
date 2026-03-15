@@ -1,0 +1,7 @@
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate /mnt/ssd/WavTokenizer/env
+export NCCL_SOCKET_IFNAME=ens7
+export NCCL_IB_DISABLE=1
+# Use NVIDIA's official NCCL and strip GCP's gIB paths from LD_LIBRARY_PATH.
+# Order matters: prepend our NCCL path first, then filter gib from the rest.
+export LD_LIBRARY_PATH=/mnt/ssd/WavTokenizer/env/lib/python3.9/site-packages/nvidia/nccl/lib:$(python3 -c "import os; print(':'.join(p for p in os.environ.get('LD_LIBRARY_PATH','').split(':') if p and 'gib' not in p))")
