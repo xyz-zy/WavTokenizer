@@ -219,10 +219,12 @@ def kmeans_distrib(
     sample_fn = batched_sample_vectors,
     all_reduce_fn = noop,
     return_history = False,
+    tol: float = 1e-4,
 ):
     num_codebooks, dim, dtype, device = samples.shape[0], samples.shape[-1], samples.dtype, samples.device
 
     means = sample_fn(samples, num_clusters)
+    history = [] if return_history else None
 
     for _ in range(num_iters):
         if use_cosine_sim:
@@ -231,6 +233,10 @@ def kmeans_distrib(
             dists = -cdist(samples, means)
 
         buckets = torch.argmax(dists, dim = -1)
+        if return_history:
+            sel = dists.gather(-1, buckets.unsqueeze(-1)).squeeze(-1)
+            inertia = (-sel).sum().float()
+            all_reduce_fn(inertia)
         bins = batched_bincount(buckets, minlength = num_clusters)
         all_reduce_fn(bins)
 
@@ -246,14 +252,26 @@ def kmeans_distrib(
         if use_cosine_sim:
             new_means = l2norm(new_means)
 
-        means = torch.where(
+        new_means = torch.where(
             rearrange(zero_mask, '... -> ... 1'),
             means,
             new_means
         )
+        if return_history:
+            deltas = (new_means - means).norm(dim = -1)
+            moved = (deltas > tol).sum().item()
+            history.append(
+                {
+                    "mean_delta": deltas.mean().item(),
+                    "max_delta": deltas.max().item(),
+                    "moved_centers": moved,
+                    "inertia": inertia.item(),
+                }
+            )
+
+        means = new_means
     if return_history:
-        # TODO: compute inertia in distributed setting
-        return means, bins, None
+        return means, bins, history
     return means, bins
 
 class EuclideanCodebook(nn.Module):

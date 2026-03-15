@@ -24,7 +24,9 @@ from decoder.pretrained_model import instantiate_class
 
 def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
     from sklearn.decomposition import PCA
-    # print(X.shape)
+    # print("plot_pca_components")
+    # print(f"{X.shape=}")
+    # print(f"{codebook_vectors.shape=}")
 
     n_comp = min(4, X.shape[1])
     pca = PCA(n_components=n_comp, random_state=random_seed)
@@ -170,6 +172,8 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
         filestem2 = f"latent_pca2{suf}"
         codebook_name2 = None
 
+    n_codebook = None if codebook_vectors is None else len(codebook_vectors)
+
     fig12 =_plot_pca_pair(
         X_pca2,
         cb_pca2,
@@ -177,7 +181,7 @@ def plot_pca_components(X, codebook_vectors, random_seed, suffix: str = ""):
         codebook_name2,
         "PC 1",
         "PC 2",
-        f"Top-2 PCA of encoder latents (pre-quant) with codebook overlay\nn_latents={len(X_pca2)}, n_codebook={len(cb_pca2)}",
+        f"Top-2 PCA of encoder latents (pre-quant) with codebook overlay\nn_latents={len(X_pca2)}, n_codebook={n_codebook}",
     )
     return fig12
 
@@ -185,6 +189,8 @@ def pca_effective_dim(
     X, var_thresh=0.99, max_samples=20000, random_state=0, svd_solver="randomized"
 ):
     # print(X.shape)
+    # print("pca_effective_dim")
+    # print(f"{X.shape=}")
     from sklearn.decomposition import PCA
 
     if X.ndim != 2 or X.shape[0] == 0:
@@ -473,6 +479,7 @@ class VocosExp(pl.LightningModule):
                 self.log("pca/latent_eff_dim_99", latent_eff_dim, on_step=True)
                 self.log("pca/codebook_eff_dim_99", codebook_eff_dim, on_step=True)
 
+                codebook = quantizer._codebook.embed.data.clone().cpu().numpy()
                 fig_cb = plot_pca_components(features, codebook, 42)
                 self.logger.experiment.add_figure(
                     f"codebook_latent_space_pca/step_{self.global_step}", fig_cb, global_step=self.global_step
