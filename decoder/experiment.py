@@ -408,10 +408,11 @@ class VocosExp(pl.LightningModule):
 
                 if self.global_step == 0 and self.global_rank == 0:
                     kmeans_history = quantizer._codebook.kmeans_history
-                    fig = plot_kmeans_history(kmeans_history)
-                    self.logger.experiment.add_figure(
-                        f"codebook_kmeans_history/step_{self.global_step}", fig, global_step=self.global_step
-                    )
+                    if kmeans_history is not None:
+                        fig = plot_kmeans_history(kmeans_history)
+                        self.logger.experiment.add_figure(
+                            f"codebook_kmeans_history/step_{self.global_step}", fig, global_step=self.global_step
+                        )
 
             if self.global_step % self.plot_every_n_steps == 0 and self.global_rank == 0:
                 self.logger.experiment.add_audio(
