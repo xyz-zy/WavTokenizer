@@ -242,6 +242,7 @@ class EuclideanCodebook(nn.Module):
 
         embed_ind = self.quantize(x)
         embed_onehot = F.one_hot(embed_ind, self.codebook_size).type(dtype)
+        self.embed_onehot_sum = embed_onehot.sum(0)
         embed_ind = self.postprocess_emb(embed_ind, shape)
         quantize = self.dequantize(embed_ind)
 

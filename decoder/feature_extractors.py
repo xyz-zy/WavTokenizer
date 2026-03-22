@@ -63,6 +63,7 @@ class EncodecFeatures(FeatureExtractor):
         vq_kmeans: int = 800,
         threshold_ema_dead_code: float = 2.0,
         novq: bool = False,
+        freeze_encoder_vq: bool = False,
     ):
         super().__init__()
 
@@ -96,6 +97,10 @@ class EncodecFeatures(FeatureExtractor):
         # self.codebook_weights = torch.nn.Parameter(codebook_weights, requires_grad=train_codebooks)
         self.bandwidths = bandwidths
         self.novq = novq
+        self.freeze_encoder_vq = freeze_encoder_vq
+        if freeze_encoder_vq:
+            self.encodec.encoder.requires_grad_(False)
+            self.encodec.quantizer.requires_grad_(False)
 
     # @torch.no_grad()
     # def get_encodec_codes(self, audio):
@@ -107,6 +112,9 @@ class EncodecFeatures(FeatureExtractor):
     def forward(self, audio: torch.Tensor, bandwidth_id: torch.Tensor):
         if self.training:
             self.encodec.train()
+            if self.freeze_encoder_vq:
+                self.encodec.encoder.eval()
+                self.encodec.quantizer.eval()
 
         audio = audio.unsqueeze(1)                  # audio(16,24000)
 
@@ -117,8 +125,16 @@ class EncodecFeatures(FeatureExtractor):
             return emb, None, torch.zeros((), device=emb.device)
         q_res = self.encodec.quantizer(emb, self.frame_rate, bandwidth=self.bandwidths[bandwidth_id])
         quantized = q_res.quantized
+        if self.freeze_encoder_vq:
+            quantized = quantized.detach()
+            with torch.no_grad():
+                cw = self.encodec.quantizer.vq.layers[0].commitment_weight
+                commit_loss = torch.nn.functional.mse_loss(
+                    q_res.quantized.detach(), emb.detach()
+                ) * cw
+        else:
+            commit_loss = q_res.penalty             # codes(8,16,75),features(16,128,75)
         codes = q_res.codes
-        commit_loss = q_res.penalty                 # codes(8,16,75),features(16,128,75)
 
         return quantized, codes, commit_loss
 

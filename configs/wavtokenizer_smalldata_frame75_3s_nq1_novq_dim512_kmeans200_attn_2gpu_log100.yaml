@@ -68,10 +68,13 @@ model:
         padding: same
 
 trainer:
+  resume_from_checkpoint: /orcd/compute/ppliang/001/lxz/WavTokenizer-logs/novq/wavtokenizer_smalldata_frame75_3s_nq1_novq_dim512_kmeans200_attn_2gpu_log100/lightning_logs/version_0/checkpoints/last-v1.ckpt
   logger:
     class_path: pytorch_lightning.loggers.TensorBoardLogger
     init_args:
       save_dir: /orcd/compute/ppliang/001/lxz/WavTokenizer-logs/novq/wavtokenizer_smalldata_frame75_3s_nq1_novq_dim512_kmeans200_attn_2gpu_log100/
+      name: lightning_logs
+      version: 0
   callbacks:
     - class_path: pytorch_lightning.callbacks.LearningRateMonitor
     - class_path: pytorch_lightning.callbacks.ModelSummary
@@ -81,7 +84,7 @@ trainer:
       init_args:
         monitor: val_loss
         filename: wavtokenizer_checkpoint_{epoch}_{step}_{val_loss:.4f}
-        save_top_k: 10
+        save_top_k: 40
         save_last: true
     - class_path: decoder.helpers.GradNormCallback
 
