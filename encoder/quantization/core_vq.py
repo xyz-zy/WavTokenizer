@@ -315,6 +315,7 @@ class EuclideanCodebook(nn.Module):
         self.register_buffer("cluster_size", torch.zeros(codebook_size))
         self.register_buffer("embed", embed)
         self.register_buffer("embed_avg", embed.clone())
+        self.register_buffer("expired_codes_mask", torch.zeros(codebook_size, dtype=torch.bool), persistent=False)
         self.expired_codes = -1
 
         self.kmeans_history = None
@@ -365,13 +366,14 @@ class EuclideanCodebook(nn.Module):
 
     def expire_codes_(self, batch_samples):
         if self.threshold_ema_dead_code == 0:
+            self.expired_codes = 0
             return
 
         expired_codes = self.cluster_size < self.threshold_ema_dead_code * distrib.world_size()
-        if not torch.any(expired_codes):
-            return
         self.expired_codes = expired_codes.sum().item()
         self.expired_codes_mask = expired_codes
+        if not torch.any(expired_codes):
+            return
         batch_samples = rearrange(batch_samples, "... d -> (...) d")
         self.replace_(batch_samples, mask=expired_codes)
         # distrib.broadcast_tensors(self.buffers())
