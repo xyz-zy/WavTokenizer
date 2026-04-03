@@ -428,6 +428,7 @@ class VocosExp(pl.LightningModule):
             self.log("quantizer/commit_loss", commit_loss)
             expired_codes = quantizer._codebook.expired_codes
             self.log("quantizer/expired_codes", expired_codes, on_step=True, prog_bar=True)
+            self.log("quantizer/accum_nonzero", quantizer._codebook.accum_nonzero, on_step=True)
             total_assignments = quantizer._codebook.embed_onehot_sum.sum().item()
             self.log("quantizer/total_assignments_per_batch", total_assignments, on_step=True)
             self.log("quantizer/cluster_size_sum", quantizer._codebook.cluster_size.sum().item(), on_step=True)
@@ -439,6 +440,12 @@ class VocosExp(pl.LightningModule):
             codebook_norms = torch.norm(quantizer._codebook.embed.data, p=2, dim=-1)
             self.log("quantizer/codebook_l2_norm_mean", codebook_norms.mean().item(), on_step=True)
             self.log("quantizer/codebook_l2_norm_std", codebook_norms.std().item(), on_step=True)
+
+            # Latent l2 norms from VQ's cached input (no extra encoder pass needed)
+            _last = quantizer._codebook._last_input  # (B*T, D), already detached
+            _l2 = _last.norm(dim=1)
+            self.log("latent/l2_norm_mean", _l2.mean().item(), on_step=True)
+            self.log("latent/l2_norm_std", _l2.std().item(), on_step=True)
 
             if self.global_step == 0 and self.global_rank == 0:
                 kmeans_history = quantizer._codebook.kmeans_history
@@ -484,31 +491,32 @@ class VocosExp(pl.LightningModule):
                 self.logger.experiment.add_figure(
                     f"codebook_latent_space_pca/step_{self.global_step}", fig_cb, global_step=self.global_step
                 )
+                plt.close(fig_cb)
 
                 respawned_codes_mask = quantizer._codebook.expired_codes_mask.detach().cpu().numpy()
                 dead_codes = original_codebook[respawned_codes_mask]
                 alive_codes = original_codebook[~respawned_codes_mask]
-                # print(len(dead_codes), "codes respawned")
                 fig_cb_respawned = plot_pca_components(features, dead_codes, 42)
                 self.logger.experiment.add_figure(
                     f"codebook_latent_space_pca_dead/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
                 )
-                fig_cb_respawned = plot_pca_components(features, alive_codes, 42)
+                plt.close(fig_cb_respawned)
+                fig_cb_alive = plot_pca_components(features, alive_codes, 42)
                 self.logger.experiment.add_figure(
-                    f"codebook_latent_space_pca_alive/step_{self.global_step}", fig_cb_respawned, global_step=self.global_step
+                    f"codebook_latent_space_pca_alive/step_{self.global_step}", fig_cb_alive, global_step=self.global_step
                 )
+                plt.close(fig_cb_alive)
 
                 respawned_codes = codebook[respawned_codes_mask]
-                # print(len(respawned_codes), "codes respawned")
-                fig_cb_respawned = plot_pca_components(features, respawned_codes, 42)
+                fig_cb_respawned2 = plot_pca_components(features, respawned_codes, 42)
                 self.logger.experiment.add_figure(
                     f"codebook_latent_space_pca_respawned/step_{self.global_step}",
-                    fig_cb_respawned,
+                    fig_cb_respawned2,
                     global_step=self.global_step,
                 )
+                plt.close(fig_cb_respawned2)
 
                 bins = np.arange(0, 10, 0.2)
-                # print(quantizer._codebook.cluster_size.cpu().numpy())
                 fig = histogram(
                     data=quantizer._codebook.cluster_size.cpu().numpy(),
                     title="EMA Cluster Size Histogram",
@@ -521,6 +529,7 @@ class VocosExp(pl.LightningModule):
                     fig,
                     global_step=self.global_step,
                 )
+                plt.close(fig)
 
                 unassigned_codes_mask = quantizer._codebook.embed_onehot_sum.cpu().numpy() == 0
                 unassigned_codes = codebook[unassigned_codes_mask]
@@ -530,9 +539,9 @@ class VocosExp(pl.LightningModule):
                     fig_cb_unassigned,
                     global_step=self.global_step,
                 )
+                plt.close(fig_cb_unassigned)
 
                 unassigned_codes_cluster_sizes = quantizer._codebook.cluster_size[unassigned_codes_mask].cpu().numpy()
-                # print("Cluster sizes of unassigned codes:", unassigned_codes_cluster_sizes)
                 fig = histogram(
                     data=unassigned_codes_cluster_sizes,
                     title="Cluster Size of Unassigned Codes",
@@ -545,18 +554,19 @@ class VocosExp(pl.LightningModule):
                     fig,
                     global_step=self.global_step,
                 )
+                plt.close(fig)
 
 
                 if self.last_step_respawned_mask is not None:
-                    fig_cb_respawned = plot_pca_components(features, codebook[self.last_step_respawned_mask], 42)
+                    fig_cb_respawned3 = plot_pca_components(features, codebook[self.last_step_respawned_mask], 42)
                     self.logger.experiment.add_figure(
                         f"codebook_latent_space_pca_last_step_respawned/step_{self.global_step}",
-                        fig_cb_respawned,
+                        fig_cb_respawned3,
                         global_step=self.global_step,
                     )
+                    plt.close(fig_cb_respawned3)
 
                     last_step_respawned_cluster_sizes = quantizer._codebook.cluster_size[self.last_step_respawned_mask].cpu().numpy()
-                    # print("Cluster sizes of codes respawned in the last step:", last_step_respawned_cluster_sizes)
                     fig = histogram(
                         data=last_step_respawned_cluster_sizes,
                         title="Cluster Size of Codes Respawned in Last Step",
@@ -569,6 +579,7 @@ class VocosExp(pl.LightningModule):
                         fig,
                         global_step=self.global_step,
                     )
+                    plt.close(fig)
                     dead_again = quantizer._codebook.expired_codes_mask.cpu().numpy() & self.last_step_respawned_mask
                     fig_cb_dead_again = plot_pca_components(features, codebook[dead_again], 42)
                     self.logger.experiment.add_figure(
@@ -576,6 +587,7 @@ class VocosExp(pl.LightningModule):
                         fig_cb_dead_again,
                         global_step=self.global_step,
                     )
+                    plt.close(fig_cb_dead_again)
 
                 self.last_step_respawned_mask = respawned_codes_mask
 
