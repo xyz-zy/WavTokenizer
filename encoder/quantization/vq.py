@@ -47,6 +47,7 @@ class ResidualVectorQuantizer(nn.Module):
         kmeans_init: bool = True,
         kmeans_iters: int = 50,
         threshold_ema_dead_code: int = 2,
+        vq_accumulate_steps: int = 1,
     ):
         super().__init__()
         self.n_q = n_q
@@ -56,10 +57,7 @@ class ResidualVectorQuantizer(nn.Module):
         self.kmeans_init = kmeans_init
         self.kmeans_iters = kmeans_iters
         self.threshold_ema_dead_code = threshold_ema_dead_code
-
-        # print(self.bins)
-
-        # breakpoint()
+        self.vq_accumulate_steps = vq_accumulate_steps
 
         self.vq = LanguageVectorQuantization(
             dim=self.dimension,
@@ -69,6 +67,7 @@ class ResidualVectorQuantizer(nn.Module):
             kmeans_init=self.kmeans_init,
             kmeans_iters=self.kmeans_iters,
             threshold_ema_dead_code=self.threshold_ema_dead_code,
+            vq_accumulate_steps=self.vq_accumulate_steps,
         )
         # self.vq = ResidualVectorQuantization(
         #     dim=self.dimension,

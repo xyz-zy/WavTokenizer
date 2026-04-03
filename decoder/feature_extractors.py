@@ -57,12 +57,13 @@ class EncodecFeatures(FeatureExtractor):
         encodec_model: str = "encodec_24khz",
         bandwidths: List[float] = [1.5, 3.0, 6.0, 12.0],
         train_codebooks: bool = False,
-        num_quantizers: int = 1, 
+        num_quantizers: int = 1,
         dowmsamples: List[int] = [6, 5, 5, 4],
         vq_bins: int = 16384,
         vq_kmeans: int = 800,
         threshold_ema_dead_code: float = 2.0,
         ema_decay: float = 0.99,
+        vq_accumulate_steps: int = 1,
     ):
         super().__init__()
 
@@ -79,7 +80,8 @@ class EncodecFeatures(FeatureExtractor):
                                 kernel_size=7, residual_kernel_size=3, last_kernel_size=7, dilation_base=2,
                                 true_skip=False, compress=2)
         quantizer = ResidualVectorQuantizer(dimension=512, n_q=n_q, bins=vq_bins, kmeans_iters=vq_kmeans,
-                                            decay=ema_decay, kmeans_init=True, threshold_ema_dead_code=threshold_ema_dead_code)
+                                            decay=ema_decay, kmeans_init=True, threshold_ema_dead_code=threshold_ema_dead_code,
+                                            vq_accumulate_steps=vq_accumulate_steps)
 
         # breakpoint()
         if encodec_model == "encodec_24khz":

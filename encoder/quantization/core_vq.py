@@ -298,6 +298,7 @@ class EuclideanCodebook(nn.Module):
         decay: float = 0.99,
         epsilon: float = 1e-5,
         threshold_ema_dead_code: int = 2,
+        vq_accumulate_steps: int = 1,
     ):
         super().__init__()
         self.decay = decay
@@ -317,6 +318,13 @@ class EuclideanCodebook(nn.Module):
         self.register_buffer("embed_avg", embed.clone())
         self.register_buffer("expired_codes_mask", torch.zeros(codebook_size, dtype=torch.bool), persistent=False)
         self.expired_codes = -1
+
+        # Multi-step accumulation for codebook EMA updates
+        self.vq_accumulate_steps = vq_accumulate_steps
+        self.register_buffer("_accum_cluster_size", torch.zeros(codebook_size), persistent=False)
+        self.register_buffer("_accum_embed_sum", torch.zeros(codebook_size, dim), persistent=False)
+        self._accum_step_count = 0
+        self.accum_nonzero = 0
 
         self.kmeans_history = None
 
@@ -373,6 +381,7 @@ class EuclideanCodebook(nn.Module):
         self.expired_codes = expired_codes.sum().item()
         self.expired_codes_mask = expired_codes
         if not torch.any(expired_codes):
+            # self.expired_codes = 0
             return
         batch_samples = rearrange(batch_samples, "... d -> (...) d")
         self.replace_(batch_samples, mask=expired_codes)
@@ -429,29 +438,47 @@ class EuclideanCodebook(nn.Module):
             # Stored for logging purposes
             self.embed_onehot_sum = embed_onehot.sum(0)
 
-            cluster_size = embed_onehot.sum(0)
-            distrib.all_reduce(cluster_size)
-            ema_inplace(self.cluster_size, cluster_size, self.decay)
+            # Only accumulate during generator steps (grad enabled),
+            # not during discriminator steps (torch.no_grad).
+            # Use no_grad for the accumulation itself to avoid building
+            # autograd graph for EMA statistics.
+            if torch.is_grad_enabled():
+                with torch.no_grad():
+                    cluster_size = embed_onehot.sum(0)
+                    distrib.all_reduce(cluster_size)
 
-            embed_sum = x.t() @ embed_onehot
-            # print(embed_sum.cpu().detach().numpy().tolist())
-            # print(embed_sum.shape)
-            # embed_sum_summed = embed_sum.abs().sum(0)
-            # print(embed_sum_summed.shape)
-            # print(embed_sum_summed)
-            distrib.all_reduce(embed_sum)
-            ema_inplace(self.embed_avg, embed_sum.t(), self.decay)
-            cluster_size = (
-                laplace_smoothing(self.cluster_size, self.codebook_size, self.epsilon)
-                * self.cluster_size.sum()
-            )
-            # distrib.broadcast_tensors(self.buffers())
-            embed_normalized = self.embed_avg / cluster_size.unsqueeze(1)
-            self.embed.data.copy_(embed_normalized)
+                    embed_sum = x.t() @ embed_onehot
+                    distrib.all_reduce(embed_sum)
 
-            # We do the expiry of code at that point as buffers are in sync
-            # and all the workers will take the same decision.
-            self.expire_codes_(x)
+                    self._accum_cluster_size.add_(cluster_size)
+                    self._accum_embed_sum.add_(embed_sum.t())
+                self._accum_step_count += 1
+
+            # Only update codebook every N steps
+            if self._accum_step_count >= self.vq_accumulate_steps:
+                self.accum_nonzero = (self._accum_cluster_size > 0).sum().item()
+                # print(f"[VQ UPDATE] accum_steps={self._accum_step_count}, "
+                #       f"accum_cluster_size_sum={self._accum_cluster_size.sum().item():.1f}, "
+                #       f"accum_nonzero={self.accum_nonzero}/{self.codebook_size}, "
+                #       f"grad_enabled={torch.is_grad_enabled()}")
+                ema_inplace(self.cluster_size, self._accum_cluster_size, self.decay)
+                ema_inplace(self.embed_avg, self._accum_embed_sum, self.decay)
+
+                cluster_size = (
+                    laplace_smoothing(self.cluster_size, self.codebook_size, self.epsilon)
+                    * self.cluster_size.sum()
+                )
+                embed_normalized = self.embed_avg / cluster_size.unsqueeze(1)
+                self.embed.data.copy_(embed_normalized)
+
+                # Expire dead codes — buffers are in sync so all workers
+                # will take the same decision.
+                self.expire_codes_(x)
+
+                # Reset accumulators
+                self._accum_cluster_size.zero_()
+                self._accum_embed_sum.zero_()
+                self._accum_step_count = 0
 
             # Sanity check that all the workers have the same codebook after the
             # update, to avoid silent errors.
@@ -502,6 +529,7 @@ class VectorQuantization(nn.Module):
         kmeans_iters: int = 50,
         threshold_ema_dead_code: int = 2,
         commitment_weight: float = 1.,
+        vq_accumulate_steps: int = 1,
     ):
         super().__init__()
         _codebook_dim: int = default(codebook_dim, dim)
@@ -516,7 +544,8 @@ class VectorQuantization(nn.Module):
         self._codebook = EuclideanCodebook(dim=_codebook_dim, codebook_size=codebook_size,
                                            kmeans_init=kmeans_init, kmeans_iters=kmeans_iters,
                                            decay=decay, epsilon=epsilon,
-                                           threshold_ema_dead_code=threshold_ema_dead_code)
+                                           threshold_ema_dead_code=threshold_ema_dead_code,
+                                           vq_accumulate_steps=vq_accumulate_steps)
         self.codebook_size = codebook_size
 
     @property
