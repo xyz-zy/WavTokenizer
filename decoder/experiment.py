@@ -256,6 +256,7 @@ class VocosExp(pl.LightningModule):
         plot_every_n_steps: int = 1000,
         commit_loss_coeff: float = 1000,
         commit_loss_ramp: Optional[dict] = None,
+        compile_model: bool = False,
     ):
         """
         Args:
@@ -276,6 +277,7 @@ class VocosExp(pl.LightningModule):
             commit_loss_ramp (dict, optional): Ramp schedule for commitment loss coefficient.
                 Expected keys: {"steps": int, "start": float}. If provided, the coefficient
                 ramps linearly from start to commit_loss_coeff over steps batches.
+            compile_model (bool, optional): If True, uses torch.compile on submodules for faster training. Default is False.
         """
         super().__init__()
         self.save_hyperparameters(ignore=["feature_extractor", "backbone", "head"])
@@ -310,6 +312,23 @@ class VocosExp(pl.LightningModule):
         self.plot_every_n_steps = plot_every_n_steps
 
         self.last_step_respawned_mask = None
+
+        self._compile_model = compile_model
+
+    def on_load_checkpoint(self, checkpoint):
+        # Strip _orig_mod. prefixes so checkpoints saved with torch.compile
+        # can be loaded without it, and vice versa.
+        state_dict = checkpoint.get("state_dict", {})
+        cleaned = {}
+        for k, v in state_dict.items():
+            cleaned[k.replace("._orig_mod.", ".")] = v
+        checkpoint["state_dict"] = cleaned
+
+    def on_fit_start(self):
+        if self._compile_model:
+            self.backbone = torch.compile(self.backbone)
+            # head (ISTFTHead) uses complex tensors incompatible with inductor
+            # Discriminators use weight_norm incompatible with torch.compile
 
     def configure_optimizers(self):
         disc_params = [
@@ -753,6 +772,7 @@ class WavTokenizer(VocosExp):
         plot_every_n_steps: int = 1000,
         commit_loss_coeff: float = 1000,
         commit_loss_ramp: Optional[dict] = None,
+        compile_model: bool = False,
     ):
         super().__init__(
             feature_extractor,
@@ -774,6 +794,7 @@ class WavTokenizer(VocosExp):
             plot_every_n_steps,
             commit_loss_coeff=commit_loss_coeff,
             commit_loss_ramp=commit_loss_ramp,
+            compile_model=compile_model,
         )
         # Override with conditional discriminators
         # VocosExp.__init__(self, feature_extractor, backbone, head, resume_config, resume_model)
