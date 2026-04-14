@@ -34,7 +34,7 @@ python metrics/infer2.py --prepath ./result/infer/WavTokenizer_small_320_24k_409
 def main(prepath):
     # prepath="./result/infer/WavTokenizer_small_600_24k_4096_nerdonly_beta10_nobuf_continue_bs40"
     # prepath="./result/infer/WavTokenizer_small_600_24k_4096"
-    rawpath = "/home/lxz/orcd/pool/libritts/LibriTTS/"
+    rawpath = "/home/lxz/data/LibriTTS/"
     # rawpath="./Data/LJSpeech-1.1/wavs"
     # preaudio = os.listdir(prepath)
     preaudio = sorted(glob.glob(prepath + "/*/*/*/*.wav"))

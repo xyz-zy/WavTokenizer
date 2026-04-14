@@ -207,6 +207,13 @@ class WavTokenizer(nn.Module):
         return audio_output
 
     @torch.inference_mode()
+    def encode_infer_no_vq(self, audio_input: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+        """Encode audio to continuous features, bypassing the VQ layer."""
+        audio = audio_input.unsqueeze(1)
+        features = self.feature_extractor.encodec.encoder(audio)
+        return features
+
+    @torch.inference_mode()
     def codes_to_features(self, codes: torch.Tensor) -> torch.Tensor:
         """
         Transforms an input sequence of discrete tokens (codes) into feature embeddings using the feature extractor's

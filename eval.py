@@ -28,7 +28,7 @@ from decoder.loss import MelSpecReconstructionLoss
 from decoder.pretrained import WavTokenizer
 from tqdm import tqdm
 
-LIBRITTS_ROOT = "/orcd/pool/008/lxz/libritts/LibriTTS"
+LIBRITTS_ROOT = "/home/lxz/data/LibriTTS"
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +105,8 @@ def main():
                         help="Override vocab size from config (e.g. 65536)")
     parser.add_argument("--result_dir", type=Path, default=Path("./result"),
                         help="Root directory for infer/ and eval/ outputs")
+    parser.add_argument("--no_vq", action="store_true",
+                        help="Bypass VQ layer: pass raw encoder output directly to decoder")
     args = parser.parse_args()
 
     device = torch.device(
@@ -128,7 +130,7 @@ def main():
 
     mel_loss_fn = MelSpecReconstructionLoss(sample_rate=args.sample_rate).to(device)
 
-    is_novq = getattr(wavtokenizer.feature_extractor, "novq", False)
+    is_novq = args.no_vq or getattr(wavtokenizer.feature_extractor, "novq", False)
     if is_novq:
         print("novq=True: skipping discrete codebook metrics, computing MSE only.")
 
@@ -169,9 +171,13 @@ def main():
         bandwidth_id = torch.tensor([0], device=device)
 
         try:
-            features, discrete_code = wavtokenizer.encode_infer(wav, bandwidth_id=bandwidth_id)
+            if is_novq:
+                features = wavtokenizer.encode_infer_no_vq(wav)
+                discrete_code = None
+            else:
+                features, discrete_code = wavtokenizer.encode_infer(wav, bandwidth_id=bandwidth_id)
         except Exception as e:
-            print(f"encode_infer failed for {p}: {e}")
+            print(f"encode failed for {p}: {e}")
             continue
 
         try:
